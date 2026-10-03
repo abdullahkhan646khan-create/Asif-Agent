@@ -551,5 +551,6 @@ def compose(template: str, photo_bytes: bytes, content: dict, brand: Brand) -> b
     photo = trim_watermark(Image.open(io.BytesIO(photo_bytes)).convert("RGB"))
     img = RENDERERS[template](photo, clean_content(content), brand)
     buf = io.BytesIO()
-    img.save(buf, "JPEG", quality=93, subsampling=0, optimize=True)
+    # progressive: on a slow connection the whole picture appears at once and sharpens, instead of top-to-bottom
+    img.save(buf, "JPEG", quality=88, subsampling=0, optimize=True, progressive=True)
     return buf.getvalue()

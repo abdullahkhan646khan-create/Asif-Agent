@@ -13,7 +13,7 @@
       {% endfor %}
     </ul>
     {% endif %}
-    {% if post and post.final_image_url %}<img class="bigimg" src="{{ post.final_image_url }}" alt="">{% endif %}
+    {% if post and post.final_image_url %}<img class="bigimg" src="{{ (post.brief or {})._thumb or post.final_image_url }}" data-full="{{ post.final_image_url }}" alt="">{% endif %}
   </div>
 </div>
 {% endblock %}

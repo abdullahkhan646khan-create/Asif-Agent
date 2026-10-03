@@ -64,3 +64,18 @@ async function copyText(btn, id) {
   btn.textContent = "Copied ✓";
   setTimeout(() => (btn.textContent = "Copy"), 1500);
 }
+
+// Big pictures: show the small thumbnail at once, then swap in the full picture when it has fully arrived
+// (so a slow connection never shows half a picture).
+function sharpenImages() {
+  document.querySelectorAll("img[data-full]").forEach((el) => {
+    const full = el.dataset.full;
+    if (!full || el.src === full) return;
+    const big = new Image();
+    big.onload = () => { el.src = full; };
+    big.src = full;
+  });
+}
+// start only after the page (thumbnail included) has loaded, so nothing competes with it on a slow connection
+if (document.readyState === "complete") sharpenImages();
+else window.addEventListener("load", sharpenImages);

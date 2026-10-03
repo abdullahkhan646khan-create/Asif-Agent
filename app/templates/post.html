@@ -9,7 +9,7 @@
 <div class="grid2">
   <div class="stack">
     {% if post.final_image_url and not working %}
-      <img class="bigimg" src="{{ post.final_image_url }}" alt="Post image">
+      <img class="bigimg" src="{{ b._thumb or post.final_image_url }}" data-full="{{ post.final_image_url }}" alt="Post image">
     {% else %}
       <div class="card thumb"><div class="wait">{% if working %}<div class="spinner"></div>{% endif %}{{ post.stage_note or "" }}</div></div>
     {% endif %}
