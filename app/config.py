@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -53,6 +54,16 @@ class Settings(BaseSettings):
     buffer_channel_ids: str = ""  # optional; empty = every Facebook, X and Threads channel in Buffer
     publish_mode: str = "shareNow"  # shareNow | addToQueue
     dry_run_publish: bool = False  # true = approve does everything except posting
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _clean(cls, value):
+        """Forgive copy-paste slips in hosting dashboards: spaces, quotes and line breaks around a value."""
+        if isinstance(value, str):
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1].strip()
+        return value
 
     @property
     def groq_model_list(self) -> list[str]:
