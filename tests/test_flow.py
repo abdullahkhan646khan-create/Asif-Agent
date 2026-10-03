@@ -678,3 +678,29 @@ def test_failed_review_email_keeps_the_post_for_the_dashboard(client, monkeypatc
     full = client.get(post["final_image_url"].replace("http://testserver", ""))
     assert thumb.status_code == 200 and len(thumb.content) < len(full.content) / 3
     assert client.post(f"/api/posts/{post['id']}/approve").json()["status"] == "published"
+
+
+def test_heartbeat_visits_its_own_health_page(monkeypatch):
+    from app import main
+    visits = []
+
+    def handler(request):
+        visits.append(str(request.url))
+        return httpx.Response(200, json={"ok": True})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(main.settings, "public_base_url", "https://asif-agent.onrender.com")
+    monkeypatch.setattr(main.settings, "heartbeat_minutes", 0.001)  # ~0.06 s for the test
+
+    async def go():
+        task = asyncio.create_task(main.heartbeat_loop())
+        await asyncio.sleep(0.3)
+        task.cancel()
+    run(go())
+    assert visits and all(v == "https://asif-agent.onrender.com/health" for v in visits)
+
+    visits.clear()  # on your computer (http://localhost) it stays off
+    monkeypatch.setattr(main.settings, "public_base_url", "http://localhost:8000")
+    run(main.heartbeat_loop())
+    assert visits == []

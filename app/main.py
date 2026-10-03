@@ -3,6 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
+import httpx
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -26,6 +27,24 @@ settings = get_settings()
 APP_DIR = ROOT / "app"
 
 
+async def heartbeat_loop() -> None:
+    """Keep the server awake: Render's free plan sleeps after 15 minutes without visitors, which would stop the
+    schedule. The app visits its own public /health every few minutes (that also keeps Supabase active)."""
+    url = f"{settings.base_url}/health"
+    if not settings.base_url.startswith("https://") or settings.heartbeat_minutes <= 0:
+        log.info("Heartbeat off (only runs on a public https address)")
+        return
+    log.info("Heartbeat on: %s every %s minutes", url, settings.heartbeat_minutes)
+    async with httpx.AsyncClient(timeout=60) as client:
+        while True:
+            await asyncio.sleep(settings.heartbeat_minutes * 60)
+            try:
+                r = await client.get(url)
+                log.info("Heartbeat: %s %s", r.status_code, r.text[:60])
+            except Exception as e:
+                log.warning("Heartbeat could not reach %s: %s", url, e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.data_dir.mkdir(parents=True, exist_ok=True)
@@ -34,7 +53,8 @@ async def lifespan(app: FastAPI):
         await pipeline.resume_after_restart()
     except Exception:
         log.exception("Could not resume unfinished posts (is the database set up?)")
-    tasks = [asyncio.create_task(pool.health_loop()), asyncio.create_task(scheduler.loop())]
+    tasks = [asyncio.create_task(pool.health_loop()), asyncio.create_task(scheduler.loop()),
+             asyncio.create_task(heartbeat_loop())]
     yield
     for t in tasks:
         t.cancel()
@@ -115,7 +135,7 @@ def future_time(value: str | None):
 
 @app.get("/health")
 async def health():
-    """Ping this every 10 minutes (cron-job.org / UptimeRobot) to keep Render awake. Also keeps Supabase active."""
+    """Visited every 10 minutes by the built-in heartbeat (and optionally cron-job.org) to keep Render awake and Supabase active."""
     try:
         await get_store().ping()
         return {"ok": True, "store": get_store().kind}

@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8000"
     brand_id: str = "amanasoft"
     data_dir: Path = ROOT / "data"
+    # Keep-awake: the app visits its own /health this often (minutes) so Render's free plan never sleeps it.
+    # Only runs when PUBLIC_BASE_URL is an https address (i.e. on Render, not on your computer). 0 = off.
+    heartbeat_minutes: float = 10
 
     # Text AI: Groq first, OpenRouter as backup
     groq_api_key: str = ""
