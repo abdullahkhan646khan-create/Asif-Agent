@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ label }}{% endblock %}
+{% block content %}
+<div class="center">
+  {# One tap from the email: this page sends the action by itself as soon as it opens in the browser.
+     It does nothing when only fetched (e.g. by an email virus scanner), because it needs the browser to run it. #}
+  <form id="go" method="post" action="/review/{{ post.id }}" class="card narrow stack" style="text-align:center">
+    <input type="hidden" name="action" value="{{ action }}">
+    <input type="hidden" name="t" value="{{ token }}">
+    <input type="hidden" name="reason" value="{{ reason }}">
+    <img src="/brand-assets/logo/logo-main-original.png" alt="{{ brand.name }}" style="height:40px;margin:0 auto">
+    <div class="spinner"></div>
+    <h2 id="msg">{{ label }}…</h2>
+    <noscript><button class="btn big" style="width:100%">{{ label }}</button></noscript>
+  </form>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function alreadySent() {
+  // came back to this tab with the Back button: never send the action a second time
+  const sp = document.querySelector(".spinner");
+  if (sp) sp.remove();
+  document.getElementById("msg").textContent = "Already sent. You can close this tab.";
+}
+window.addEventListener("pageshow", (e) => { if (e.persisted) alreadySent(); });  // page restored from memory
+const nav = performance.getEntriesByType("navigation")[0];
+if (nav && nav.type === "back_forward") alreadySent();
+else document.getElementById("go").submit();
+</script>
+{% endblock %}

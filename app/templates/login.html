@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Log in{% endblock %}
+{% block content %}
+<div class="center">
+  <form class="card narrow stack" method="post" action="/login">
+    <img src="/brand-assets/logo/logo-main-original.png" alt="{{ brand.name }}" style="height:48px;display:block;margin:0 auto 6px">
+    <h2 style="text-align:center">Post Agent</h2>
+    {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+    <div><label class="lbl" for="pw">Password</label><input id="pw" type="password" name="password" autofocus required></div>
+    <button class="btn big" style="width:100%">Log in</button>
+  </form>
+</div>
+{% endblock %}

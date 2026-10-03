@@ -1,0 +1,427 @@
+{
+  "client_id": "amanasoft",
+  "company": {
+    "name": "Amanasoft",
+    "long_name": "Amanasoft IT Solutions",
+    "name_arabic": "أمانا سوفت",
+    "type": "IT services, smart security and AI automation agency",
+    "location": "Deira, Dubai, United Arab Emirates",
+    "market": "Businesses across the UAE, with a Dubai focus",
+    "website": "amanasoft.ae",
+    "website_url": "https://amanasoft.ae",
+    "email": "info@amanasoft.ae",
+    "phone": "+971 55 940 8284",
+    "socials": {
+      "facebook": "https://www.facebook.com/profile.php?id=61586544835747",
+      "instagram": "https://www.instagram.com/amanasoftsolutions/",
+      "linkedin": "https://www.linkedin.com/company/amanasoftitsolutions/"
+    },
+    "taglines": [
+      "Your Technology Partner, Not Just a Service Provider",
+      "Building Technology. Delivering Happiness."
+    ],
+    "positioning": "A client-centric UAE technology partner that designs, installs and supports the full IT stack of a business: physical network infrastructure, security systems, cloud, software and AI automation. Reliable, standards-based, future-ready, with long-term support."
+  },
+  "person": {
+    "name": "Mirza A. Asif",
+    "role": "Business Development Manager, Amanasoft",
+    "linkedin": "https://ae.linkedin.com/in/asifclouddxb",
+    "linkedin_summary": "",
+    "notes": "LinkedIn could not be read automatically (LinkedIn blocks bots). Paste his headline/about text into linkedin_summary to enrich posts."
+  },
+  "audience": [
+    "Business owners and managing directors of SMEs in Dubai and the UAE",
+    "IT managers and office/facility managers",
+    "Developers and fit-out contractors of offices, warehouses and commercial buildings",
+    "Retail, hospitality, clinics, schools and multi-branch companies",
+    "Companies wanting to automate customer service and marketing with AI"
+  ],
+  "services": [
+    {
+      "category": "Information Technology",
+      "name": "Structured Cabling",
+      "one_liner": "End-to-end copper (Cat6, Cat6A, Cat7) and fiber optic cabling for offices, data centers and commercial buildings, designed and tested to TIA/EIA and ISO/IEC standards.",
+      "selling_points": [
+        "Future-proof, high-bandwidth design",
+        "Standards-compliant installation",
+        "Clean, labeled, documented cabling",
+        "Site survey to final testing"
+      ],
+      "visual_ideas": [
+        "neatly dressed patch panel with color-coded blue and yellow patch cords",
+        "engineer in hard hat labeling cables in a server rack",
+        "glowing fiber optic strands",
+        "organized cable trays in a modern office ceiling"
+      ]
+    },
+    {
+      "category": "Information Technology",
+      "name": "Network Solutions",
+      "one_liner": "LAN, WAN and SD-WAN design, deployment and optimization with redundancy, capacity planning and proactive maintenance.",
+      "selling_points": [
+        "Tailored network topologies",
+        "High availability and redundancy",
+        "Proactive monitoring and tuning",
+        "Easy to manage and scale"
+      ],
+      "visual_ideas": [
+        "enterprise network switches with glowing status LEDs",
+        "light trails connecting Dubai office towers",
+        "network operations center with large screens"
+      ]
+    },
+    {
+      "category": "Information Technology",
+      "name": "Cyber Security",
+      "one_liner": "Protection for data, systems and networks from unauthorized access, built into the architecture for business continuity and resilience.",
+      "selling_points": [
+        "Threat protection",
+        "Secure digital transformation",
+        "Business continuity",
+        "Compliance support"
+      ],
+      "visual_ideas": [
+        "holographic shield over a server room",
+        "security operations center with analysts",
+        "digital padlock made of blue light"
+      ]
+    },
+    {
+      "category": "Information Technology",
+      "name": "Cloud Solutions",
+      "one_liner": "Cloud migration, hosting (shared, VPS, dedicated and cloud) and collaboration tools that improve agility, scalability and efficiency.",
+      "selling_points": [
+        "Smooth cloud migration",
+        "Scalable hosting",
+        "Better collaboration",
+        "Cost efficiency"
+      ],
+      "visual_ideas": [
+        "modern data center aisle with blue light",
+        "abstract glowing cloud above a city skyline",
+        "team collaborating on laptops in a bright office"
+      ]
+    },
+    {
+      "category": "Information Technology",
+      "name": "IT Consultancy, Support & Backup",
+      "one_liner": "Expert IT consultancy, infrastructure management (servers, network, storage) and reliable backup and recovery.",
+      "selling_points": [
+        "Right technology decisions",
+        "Minimal downtime",
+        "Protected business data",
+        "Ongoing support"
+      ],
+      "visual_ideas": [
+        "consultant presenting to a business team",
+        "IT engineer monitoring dashboards",
+        "server storage array"
+      ]
+    },
+    {
+      "category": "Software Development",
+      "name": "Web Development",
+      "one_liner": "Business websites, e-commerce stores, WordPress sites and PHP backends that are fast, secure and built to convert.",
+      "selling_points": [
+        "Custom design",
+        "E-commerce ready",
+        "SEO friendly",
+        "Secure and fast"
+      ],
+      "visual_ideas": [
+        "laptop and phone showing a sleek website mockup (no readable text)",
+        "developer workspace with code on screen"
+      ]
+    },
+    {
+      "category": "Software Development",
+      "name": "Mobile App Development",
+      "one_liner": "Custom mobile apps for iOS and Android that streamline operations and engage customers.",
+      "selling_points": [
+        "iOS and Android",
+        "Modern UX",
+        "Integrations with your systems"
+      ],
+      "visual_ideas": [
+        "hand holding a smartphone with a glowing app interface (no readable text)",
+        "multiple phones floating with app screens"
+      ]
+    },
+    {
+      "category": "Smart Security",
+      "name": "IP CCTV & AHD CCTV Systems",
+      "one_liner": "Flexible, scalable and cost-effective IP and AHD CCTV surveillance tailored to each site.",
+      "selling_points": [
+        "HD surveillance",
+        "Remote monitoring",
+        "Scalable for multi-site",
+        "Professional installation"
+      ],
+      "visual_ideas": [
+        "sleek dome and bullet cameras on a modern building",
+        "security control room with camera feeds"
+      ]
+    },
+    {
+      "category": "Smart Security",
+      "name": "Access Control Systems",
+      "one_liner": "Advanced access control that regulates, monitors and secures entry to buildings, rooms and restricted areas.",
+      "selling_points": [
+        "Card, PIN and biometric entry",
+        "Central control",
+        "Audit trails"
+      ],
+      "visual_ideas": [
+        "employee tapping an access card on a sleek reader at a glass door",
+        "turnstiles in a modern lobby"
+      ]
+    },
+    {
+      "category": "Smart Security",
+      "name": "Time & Attendance Systems",
+      "one_liner": "Live employee check-in/out, instant attendance reports, mobile and web check-in and a central dashboard for multi-branch companies.",
+      "selling_points": [
+        "Real-time attendance",
+        "Multi-branch dashboard",
+        "Payroll integration",
+        "Mobile check-in"
+      ],
+      "visual_ideas": [
+        "employee using a wall-mounted attendance terminal",
+        "HR manager viewing attendance dashboard on a tablet"
+      ]
+    },
+    {
+      "category": "Smart Security",
+      "name": "Biometric Systems",
+      "one_liner": "High-speed, accurate fingerprint and face recognition with real-time capture and HR/payroll integration.",
+      "selling_points": [
+        "Fast and accurate",
+        "HR and payroll integration",
+        "Secure identity"
+      ],
+      "visual_ideas": [
+        "finger on a glowing fingerprint scanner",
+        "face recognition terminal at an office entrance"
+      ]
+    },
+    {
+      "category": "AI Automation",
+      "name": "AI Voice Receptionist",
+      "one_liner": "An AI receptionist that answers calls 24/7, books appointments and handles common questions.",
+      "selling_points": [
+        "Never miss a call",
+        "24/7 availability",
+        "Books appointments automatically"
+      ],
+      "visual_ideas": [
+        "elegant headset with glowing AI sound waves",
+        "friendly reception desk with holographic AI assistant"
+      ]
+    },
+    {
+      "category": "AI Automation",
+      "name": "Web Chatbot",
+      "one_liner": "AI chatbots on your website that answer customers instantly and capture leads.",
+      "selling_points": [
+        "Instant answers",
+        "Lead capture",
+        "Works 24/7"
+      ],
+      "visual_ideas": [
+        "laptop with a glowing chat bubble interface (no readable text)",
+        "friendly AI assistant icon made of light"
+      ]
+    },
+    {
+      "category": "AI Automation",
+      "name": "WhatsApp AI Chatbot",
+      "one_liner": "AI chatbots on WhatsApp that reply to customers, qualify leads and take orders automatically.",
+      "selling_points": [
+        "Replies in seconds",
+        "Qualifies leads",
+        "Works on the app customers already use"
+      ],
+      "visual_ideas": [
+        "smartphone with green chat bubbles and a glowing AI spark (no readable text, no WhatsApp logo)"
+      ]
+    },
+    {
+      "category": "AI Automation",
+      "name": "Agentic AI Solutions",
+      "one_liner": "Autonomous AI agents that plan, execute tasks and make decisions across multiple business systems.",
+      "selling_points": [
+        "Automates complex workflows",
+        "Connects your systems",
+        "Scales operations"
+      ],
+      "visual_ideas": [
+        "network of glowing nodes connecting business app icons",
+        "futuristic AI core above a Dubai skyline at night"
+      ]
+    },
+    {
+      "category": "AI Automation",
+      "name": "Social Media Automation",
+      "one_liner": "AI that automates content scheduling, message replies and engagement to keep a consistent online presence.",
+      "selling_points": [
+        "Consistent posting",
+        "Faster replies",
+        "More time for business"
+      ],
+      "visual_ideas": [
+        "floating social media style cards around a phone (no real platform logos)"
+      ]
+    },
+    {
+      "category": "AI Automation",
+      "name": "Cloud-Based AI Automation",
+      "one_liner": "Cloud-hosted AI workflows that automate repetitive business processes end to end.",
+      "selling_points": [
+        "Less manual work",
+        "Fewer errors",
+        "Scales with you"
+      ],
+      "visual_ideas": [
+        "glowing workflow lines between cloud and office devices"
+      ]
+    },
+    {
+      "category": "AI Automation",
+      "name": "RAG-Powered AI Agents",
+      "one_liner": "AI agents that answer accurately from your own company documents and knowledge base.",
+      "selling_points": [
+        "Answers from your own data",
+        "Accurate and private",
+        "Instant knowledge for staff and customers"
+      ],
+      "visual_ideas": [
+        "documents turning into glowing data streams feeding an AI core"
+      ]
+    }
+  ],
+  "voice": {
+    "tone": [
+      "professional",
+      "confident",
+      "trustworthy",
+      "modern",
+      "helpful"
+    ],
+    "language": "English",
+    "style_rules": [
+      "Lead with the business benefit, then the service.",
+      "Short, clear sentences. No jargon without a benefit next to it.",
+      "Speak to UAE businesses; mention Dubai/UAE naturally, not in every sentence.",
+      "End with one clear call to action (call, WhatsApp, email or website).",
+      "Emojis: at most 2-3 on Facebook, 0-1 on X and Threads. Tasteful ones only (e.g. ✅ 📞 🌐 🚀 🔒)."
+    ],
+    "avoid": [
+      "Hype words like 'revolutionary', 'best in the world', 'guaranteed'.",
+      "Invented numbers, prices, discounts, client names, awards or certifications.",
+      "Mentioning competitors.",
+      "Political or religious commentary (festival greetings are fine when requested).",
+      "Spelling the domain as amanasoft.net - the correct website is amanasoft.ae."
+    ]
+  },
+  "claims_policy": {
+    "safe_to_use": [
+      "Based in Dubai, serving businesses across the UAE",
+      "Certified engineers / certified professionals",
+      "Standards-based structured cabling (TIA/EIA and ISO/IEC)",
+      "End-to-end service: consultation, design, installation, testing and support",
+      "Long-term support and client-centric approach"
+    ],
+    "do_not_use_until_confirmed": [
+      "Years of experience (website says 20 years - confirm with client)",
+      "Project and client counts (website shows 187 happy clients, 217 finished projects, and elsewhere 875 completed projects - inconsistent)",
+      "100% client satisfaction",
+      "Any award names"
+    ]
+  },
+  "visual": {
+    "colors": {
+      "brand_cyan": "#00A9CE",
+      "brand_blue": "#3676C6",
+      "brand_purple": "#6C42BD",
+      "poster_blue": "#3367A3",
+      "lavender": "#948CBD",
+      "navy": "#1F3566",
+      "deep_space": "#0B0F2E",
+      "accent_yellow": "#F8D04A",
+      "white": "#FFFFFF"
+    },
+    "logo_gradient": [
+      "#00A9CE",
+      "#3676C6",
+      "#6C42BD"
+    ],
+    "fonts": {
+      "headline": "Montserrat ExtraBold, uppercase",
+      "body": "Montserrat / Inter"
+    },
+    "look_and_feel": [
+      "Modern corporate-tech: blue-to-purple gradients, flowing wave shapes, subtle dot and plus-sign decorations.",
+      "Bold uppercase headline with ONE power word highlighted in yellow (#F8D04A).",
+      "Realistic, high-quality technology photography: server racks, fiber and copper cabling, network switches, CCTV, engineers at work, modern Dubai offices, Dubai skyline.",
+      "Premium night posters (like the client's 'AI-Driven Networks' sample): Dubai skyline under a starry sky, a UAE flag (drawn by our designer, never by the AI), big gradient headline and a short benefit paragraph.",
+      "Lighting in cool blue, cyan and violet tones with small warm yellow accents.",
+      "Logo always the original file, never redrawn. Contact footer always present.",
+      "Every post states a customer problem or goal, the solution and 3 concrete benefits. No call-to-action buttons on the image; calls to action go in the captions."
+    ],
+    "photo_style_prompt": "ultra-realistic professional commercial photography, cinematic lighting, cool blue, cyan and violet color grading with subtle warm yellow accents, shallow depth of field, crisp detail, premium corporate technology aesthetic",
+    "avoid_in_images": [
+      "any text, letters, numbers, labels or signage",
+      "logos or brand marks of any company",
+      "watermarks",
+      "distorted hands or faces",
+      "messy tangled cables (unless showing a 'before' problem)",
+      "flags (the designer adds the UAE flag itself where needed)"
+    ]
+  },
+  "hashtags": {
+    "always": [
+      "#Amanasoft",
+      "#Dubai",
+      "#UAE"
+    ],
+    "by_category": {
+      "Information Technology": [
+        "#ITSolutions",
+        "#DubaiBusiness",
+        "#NetworkSolutions",
+        "#StructuredCabling",
+        "#CyberSecurity",
+        "#CloudComputing",
+        "#ITSupport"
+      ],
+      "Software Development": [
+        "#WebDevelopment",
+        "#AppDevelopment",
+        "#Ecommerce",
+        "#DigitalTransformation"
+      ],
+      "Smart Security": [
+        "#CCTV",
+        "#AccessControl",
+        "#SmartSecurity",
+        "#Biometrics",
+        "#TimeAttendance"
+      ],
+      "AI Automation": [
+        "#AIAutomation",
+        "#AIAgents",
+        "#Chatbot",
+        "#BusinessAutomation",
+        "#AIinUAE"
+      ]
+    }
+  },
+  "cta_options": [
+    "Call or WhatsApp +971 55 940 8284",
+    "Book a free consultation",
+    "Get a free site survey",
+    "Visit amanasoft.ae",
+    "Email info@amanasoft.ae"
+  ]
+}

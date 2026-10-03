@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Post Agent{% endblock %} · {{ brand.name }}</title>
+  <link rel="icon" href="/brand-assets/logo/logo-icon-original.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Montserrat:wght@700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+{% if request.session.get('auth') %}
+<header class="top">
+  <a class="top-brand" href="/"><img src="/brand-assets/logo/logo-main-original.png" alt="{{ brand.name }}"><span>Post Agent</span></a>
+  <nav>
+    <a href="/" class="{{ 'on' if request.url.path == '/' }}">Posts</a>
+    <a href="/schedule" class="{{ 'on' if request.url.path == '/schedule' }}">Schedule</a>
+    <a href="/logout" class="muted">Log out</a>
+  </nav>
+</header>
+{% endif %}
+{% if settings.dry_run_publish and request.session.get('auth') %}
+<div class="banner">Test mode is on (DRY_RUN_PUBLISH=true): approving a post does everything except actually posting.</div>
+{% endif %}
+<main class="wrap">{% block content %}{% endblock %}</main>
+<div id="toast" class="toast" hidden></div>
+<script src="/static/app.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

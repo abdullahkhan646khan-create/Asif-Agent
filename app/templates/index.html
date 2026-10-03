@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Posts{% endblock %}
+{% block content %}
+<section class="card composer">
+  <h1>What should we <em>post</em> today?</h1>
+  {% set layout_names = {"wave": "Blue wave", "spotlight": "Dark photo", "checklist": "Checklist", "skyline": "Dubai night"} %}
+  <form id="new-post">
+    <textarea id="idea" name="idea" placeholder="Your idea (optional), e.g. “CCTV for warehouses” or “whatsapp chatbot ka post banao clinics ke liye”. Leave it empty and the agent picks a fresh topic."></textarea>
+    <div class="selects">
+      <label>Service
+        <select name="service">
+          <option value="">Auto</option>
+          {% for cat, items in brand.profile.services|groupby("category") %}
+          <optgroup label="{{ cat }}">{% for s in items %}<option value="{{ s.name }}">{{ s.name }}</option>{% endfor %}</optgroup>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Post type
+        <select name="post_type">
+          <option value="">Auto</option>
+          {% for key, desc in post_types.items() %}<option value="{{ key }}">{{ desc.split(":")[0] }}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
+    <div class="when-row">
+      <label>When to publish
+        <select name="when_mode" id="when-mode">
+          <option value="now">Right after I approve it</option>
+          <option value="at">At a time I choose</option>
+        </select>
+      </label>
+      <label id="when-at-wrap" hidden>Date &amp; time (Dubai)
+        <input type="datetime-local" name="publish_at" id="publish-at" min="{{ min_time }}">
+      </label>
+    </div>
+    <div class="chips" role="radiogroup" aria-label="Layout">
+      <label><input type="radio" name="template" value="" checked><span>Auto layout</span></label>
+      {% for t in layouts %}<label><input type="radio" name="template" value="{{ t }}"><span>{{ layout_names.get(t, t) }}</span></label>{% endfor %}
+    </div>
+    <div class="foot">
+      <span class="hint">Everything on Auto = a fresh topic that hasn't been posted before. About 1–2 minutes, then an email to approve.
+        Daily automatic posts: <a href="/schedule" style="color:#fff;text-decoration:underline">Schedule</a>.</span>
+      <button class="btn yellow big" id="go">Create post</button>
+    </div>
+  </form>
+</section>
+
+<section style="margin-top:30px">
+  <div class="row" style="justify-content:space-between">
+    <h2 style="margin:0">Posts</h2>
+    <span class="muted small">Dubai time: {{ now_dubai }}</span>
+  </div>
+  <div class="filters" id="filters"></div>
+  <div class="posts" id="posts"></div>
+  <div class="empty" id="empty" hidden>No posts here yet.</div>
+  <div style="text-align:center;margin-top:18px"><button class="btn ghost" id="more" hidden>Show older posts</button></div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let posts = {{ posts|tojson }};
+let filter = "all";
+let limit = 60;
+const FILTER_NAMES = { all: "All", approval: "Needs approval", scheduled: "Scheduled", working: "Being made",
+                       published: "Published", problems: "Problems" };
+
+function card(p) {
+  const c = p.captions || {};
+  const title = c.title || p.idea;
+  const img = p.final_image_url && !WORKING.includes(p.status)
+    ? `<img src="${esc(p.final_image_url)}" alt="" loading="lazy">`
+    : `<div class="wait">${WORKING.includes(p.status) ? '<div class="spinner"></div>' : ''}${esc(p.stage_note || '')}</div>`;
+  const when = p.scheduled_for && !["published", "cancelled"].includes(p.status)
+    ? `<div class="when">🕘 ${esc(dubai(p.scheduled_for))}</div>` : "";
+  return `<a class="post" href="/posts/${p.id}">
+    <div class="thumb">${img}</div>
+    <div class="meta">${badge(p.status)}${p.attempt > 1 ? ` <span class="muted small">v${p.attempt}</span>` : ''}
+      <div class="title">${esc(title)}</div>${when}
+      <div class="muted small">${ago(p.created_at)}</div></div></a>`;
+}
+
+function render() {
+  const shown = posts.filter(FILTERS[filter]);
+  document.getElementById("filters").innerHTML = Object.keys(FILTERS).map((k) => {
+    const n = posts.filter(FILTERS[k]).length;
+    return `<button type="button" class="${k === filter ? "on" : ""}" data-f="${k}">${FILTER_NAMES[k]}<span class="n">${n}</span></button>`;
+  }).join("");
+  document.getElementById("posts").innerHTML = shown.map(card).join("");
+  document.getElementById("empty").hidden = shown.length > 0;
+  document.getElementById("more").hidden = posts.length < limit;
+}
+
+document.getElementById("more").addEventListener("click", async () => {
+  limit += 60;
+  try { posts = await api("GET", `/api/posts?limit=${limit}`); render(); } catch (e) { toast(e.message, true); }
+});
+
+document.getElementById("filters").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-f]");
+  if (b) { filter = b.dataset.f; render(); }
+});
+
+document.getElementById("when-mode").addEventListener("change", (e) => {
+  document.getElementById("when-at-wrap").hidden = e.target.value !== "at";
+});
+
+async function poll() {
+  try { posts = await api("GET", `/api/posts?limit=${limit}`); render(); } catch (e) {}
+  setTimeout(poll, posts.some((p) => WORKING.includes(p.status)) ? 3000 : 15000);
+}
+
+document.getElementById("new-post").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById("go");
+  const f = new FormData(e.target);
+  const at = f.get("when_mode") === "at" ? f.get("publish_at") : null;
+  if (f.get("when_mode") === "at" && !at) { toast("Pick the date and time to publish", true); return; }
+  btn.disabled = true;
+  try {
+    const p = await api("POST", "/api/posts", {
+      idea: f.get("idea") || "", template: f.get("template") || null,
+      service: f.get("service") || null, post_type: f.get("post_type") || null, publish_at: at,
+    });
+    posts.unshift(p); filter = "all"; render();
+    document.getElementById("idea").value = "";
+    toast(at ? `Working on it. After you approve, it goes out on ${dubai(p.scheduled_for)}.` : "Working on it. Watch the card below.");
+  } catch (err) { toast(err.message, true); }
+  btn.disabled = false;
+});
+
+render();
+setTimeout(poll, 3000);
+</script>
+{% endblock %}

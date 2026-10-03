@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+<body style="margin:0;padding:0;background:#EEF2F8;font-family:Arial,Helvetica,sans-serif;color:#1F2A44;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#EEF2F8;padding:24px 0;">
+<tr><td align="center">
+<table role="presentation" width="640" cellpadding="0" cellspacing="0" style="max-width:640px;width:100%;background:#ffffff;border-radius:14px;overflow:hidden;">
+  <tr><td style="background:#1F3566;padding:18px 24px;color:#ffffff;font-size:15px;">
+    <b>{{ brand.name }}</b> · {% if auto %}Automatic post coming up{% else %}New post ready for review{% endif %}{% if post.attempt > 1 %} · version {{ post.attempt }}{% endif %}
+  </td></tr>
+  {% if when_label %}
+  <tr><td style="padding:16px 24px 0;">
+    <div style="background:{{ '#FEF3C7' if auto else '#EAF1FB' }};color:{{ '#92400E' if auto else '#1E40AF' }};border-radius:10px;padding:12px 14px;font-size:14px;">
+      {% if auto %}🕘 This post will be published <b>automatically</b> on <b>{{ when_label }}</b> (Dubai time). Do nothing to let it go out.
+      {% elif future %}🕘 Planned for <b>{{ when_label }}</b> (Dubai time). Approve it and it goes out at that time.
+      {% else %}🕘 It was planned for <b>{{ when_label }}</b> (Dubai time). Approving now publishes it right away.{% endif %}
+    </div>
+  </td></tr>
+  {% endif %}
+  <tr><td style="padding:22px 24px 6px;">
+    <div style="font-size:21px;font-weight:bold;line-height:1.3;">{{ captions.title }}</div>
+    <div style="font-size:13px;color:#6B7280;margin-top:6px;">{% if post.idea.startswith("Auto: ") %}Topic picked by the agent: {{ post.idea[6:] }}{% else %}Your idea: “{{ post.idea }}”{% endif %}</div>
+  </td></tr>
+  <tr><td style="padding:14px 24px;">
+    <img src="cid:post" width="592" alt="Post image" style="width:100%;max-width:592px;height:auto;border-radius:10px;display:block;">
+  </td></tr>
+  <tr><td style="padding:6px 24px 18px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+      {% if not auto %}
+      <td width="50%" style="padding-right:6px;">
+        <a href="{{ approve_url }}" style="display:block;text-align:center;background:#16A34A;color:#ffffff;text-decoration:none;font-weight:bold;font-size:16px;padding:15px 10px;border-radius:10px;">✅ {% if future %}Approve for {{ when_label }}{% else %}Approve &amp; Publish{% endif %}</a>
+      </td>
+      {% endif %}
+      <td width="50%" style="{{ 'padding-left:6px;' if not auto else 'padding-right:6px;' }}">
+        <a href="{{ reject_url }}" style="display:block;text-align:center;background:#DC2626;color:#ffffff;text-decoration:none;font-weight:bold;font-size:16px;padding:15px 10px;border-radius:10px;">❌ Reject &amp; Redo</a>
+      </td>
+      {% if auto %}
+      <td width="50%" style="padding-left:6px;">
+        <a href="{{ cancel_url }}" style="display:block;text-align:center;background:#4B5563;color:#ffffff;text-decoration:none;font-weight:bold;font-size:16px;padding:15px 10px;border-radius:10px;">⛔ Cancel this post</a>
+      </td>
+      {% endif %}
+    </tr></table>
+    <div style="font-size:12px;color:#6B7280;text-align:center;margin-top:8px;line-height:1.6;">
+      {% if auto %}One tap. Reject makes a new version for the same time. Cancel means nothing is posted at this time.
+      {% else %}One tap: Approve {% if future %}schedules it for {{ when_label }} on{% else %}publishes it right away to{% endif %} {{ targets }}. Reject makes a new version and emails it to you.{% endif %}
+      <br>Reject because:
+      {% for code, label in [("image", "Different image"), ("text", "Too much text"), ("focus", "Wrong service"), ("headline", "Weak headline"), ("brand", "Not on brand")] %}
+        <a href="{{ reject_url }}&amp;r={{ code }}" style="color:#DC2626;text-decoration:underline;">{{ label }}</a>{% if not loop.last %} · {% endif %}
+      {% endfor %}
+      {% if when_label and not auto %}<br><a href="{{ cancel_url }}" style="color:#6B7280;">Skip this time (publish nothing)</a>{% endif %}
+    </div>
+  </td></tr>
+  {% for label, key, count, limit in [("Facebook", "facebook", none, none), ("X (Twitter)", "x", x_len, 280), ("Threads", "threads", threads_len, 500)] %}
+  <tr><td style="padding:0 24px 16px;">
+    <div style="font-size:12px;font-weight:bold;letter-spacing:.06em;text-transform:uppercase;color:#3676C6;margin-bottom:6px;">
+      {{ label }}{% if count is not none %} <span style="color:#9CA3AF;font-weight:normal;">· {{ count }}/{{ limit }} characters</span>{% endif %}
+    </div>
+    <div style="background:#F6F8FC;border:1px solid #E5EAF3;border-radius:10px;padding:14px;font-size:14px;line-height:1.55;white-space:pre-wrap;">{{ captions[key] }}</div>
+    {% if key == "threads" and captions.threads_topic %}<div style="font-size:12px;color:#6B7280;margin-top:6px;">Threads topic: {{ captions.threads_topic }}</div>{% endif %}
+  </td></tr>
+  {% endfor %}
+  <tr><td style="padding:4px 24px 22px;font-size:12px;color:#6B7280;border-top:1px solid #EEF2F8;">
+    Layout: {{ brief.template }} · Service: {{ brief.service }} ·
+    <a href="{{ dashboard_url }}" style="color:#3676C6;">Open in dashboard</a><br>
+    These buttons only work for this version of the post.
+  </td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>

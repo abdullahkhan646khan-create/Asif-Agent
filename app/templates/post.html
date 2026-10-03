@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}Post{% endblock %}
+{% set c = post.captions or {} %}
+{% set b = post.brief or {} %}
+{% set prefs = post.prefs or {} %}
+{% set working = post.status in ["queued", "writing", "imaging", "designing", "emailing", "publishing"] %}
+{% block content %}
+<p><a href="/">← All posts</a></p>
+<div class="grid2">
+  <div class="stack">
+    {% if post.final_image_url and not working %}
+      <img class="bigimg" src="{{ post.final_image_url }}" alt="Post image">
+    {% else %}
+      <div class="card thumb"><div class="wait">{% if working %}<div class="spinner"></div>{% endif %}{{ post.stage_note or "" }}</div></div>
+    {% endif %}
+    {% if post.history %}
+    <div class="card">
+      <h3>Earlier versions (rejected)</h3>
+      <div class="versions">
+        {% for h in post.history|reverse %}
+        <a href="{{ h.final_image_url or '#' }}" target="_blank" title="{{ h.reason or 'no reason given' }}">
+          {% if h.final_image_url %}<img src="{{ h.final_image_url }}" alt="">{% endif %}
+          <span class="muted small">v{{ h.attempt }}{% if h.reason %}: {{ h.reason[:40] }}{% endif %}</span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="stack">
+    <div class="card stack">
+      <div class="row" style="justify-content:space-between">
+        <span id="badge"></span>
+        <span class="muted small">Version {{ post.attempt }} · {{ post.created_at|ago }}</span>
+      </div>
+      <h1 style="font-size:22px">{{ c.title or post.idea }}</h1>
+      <p class="muted small" style="margin:0">
+        {% if post.idea.startswith("Auto: ") %}Topic picked by the agent: {{ post.idea[6:] }}{% else %}Idea: “{{ post.idea }}”{% endif %}
+      </p>
+      {% if when and post.status not in ["published", "cancelled", "missed"] %}
+      <div class="alert info">🕘 {% if post.status == "scheduled" %}Goes out on {% endif %}<b>{{ when|dubai }}</b> (Dubai time)
+        {% if prefs.source == "schedule" %}· from your daily schedule{% endif %}
+        {% if prefs.auto_publish %}· <b>fully automatic</b>{% elif post.status == "scheduled" %}· approved{% endif %}
+        {% if post.status == "pending_review" and future %}<br>Approve it and it goes out at that time.{% endif %}
+        {% if post.status == "pending_review" and not future %}<br>Its time has passed: approving publishes it right away.{% endif %}
+      </div>
+      {% endif %}
+      {% if post.status == "published" and post.published_at %}<p class="muted small" style="margin:0">Published {{ post.published_at|dubai }} (Dubai time)</p>{% endif %}
+      {% if post.error %}<div class="alert bad">{{ post.error }}</div>{% endif %}
+      {% if working or post.status in ["missed", "cancelled"] or (post.status == "scheduled" and not when) %}<div class="alert info">{{ post.stage_note }}</div>{% endif %}
+
+      {% if post.status == "pending_review" %}
+      <div class="row">
+        <button class="btn green big" onclick="act('approve')">✅ {% if future %}Approve for {{ when|dubai }}{% else %}Approve &amp; Publish{% endif %}</button>
+        <button class="btn ghost" onclick="api('POST','/api/posts/{{ post.id }}/resend').then(()=>toast('Email sent again'),e=>toast(e.message,true))">Re-send email</button>
+      </div>
+      {% endif %}
+      {% if can.publish_now and post.status != "pending_review" or (post.status == "pending_review" and future) %}
+      <div class="row">
+        <button class="btn {{ 'big' if post.status != 'pending_review' else 'ghost' }}" onclick="act('publish-now')">🚀 Publish now</button>
+        {% if post.status == "pending_review" %}<span class="muted small">Skips the planned time and posts immediately.</span>{% endif %}
+      </div>
+      {% endif %}
+      {% if can.reject %}
+      <div>
+        <label class="lbl" for="reason">Not happy? Tell the AI what to change (optional)</label>
+        <textarea id="reason" rows="2" placeholder="e.g. Use a darker look, focus on data centers, shorter text"></textarea>
+        <div class="row" style="margin-top:8px"><button class="btn red" onclick="act('reject')">❌ Reject &amp; make a new version</button></div>
+      </div>
+      {% endif %}
+      {% if post.status in ["failed", "publish_failed", "partly_published"] %}
+      <div class="row"><button class="btn big" onclick="act('retry')">↻ Retry</button>
+        <span class="muted small">{% if post.status == "failed" %}Continues from the step that failed.{% else %}Retries only the platforms that failed.{% endif %}</span></div>
+      {% endif %}
+      {% if can.reschedule %}
+      <div>
+        <label class="lbl" for="new-time">{% if when %}Change the publish time{% else %}Publish at a set time instead{% endif %} (Dubai)</label>
+        <div class="row">
+          <input type="datetime-local" id="new-time" min="{{ min_time }}" value="{{ post.scheduled_for|local_input if future else '' }}">
+          <button class="btn ghost" onclick="reschedule()">Save time</button>
+        </div>
+      </div>
+      {% endif %}
+      {% if can.cancel %}
+      <div class="row"><button class="btn ghost" style="color:var(--red)" onclick="act('cancel')">⛔ Cancel this post</button>
+        <span class="muted small">Nothing will be published.</span></div>
+      {% endif %}
+    </div>
+
+    {% if events %}
+    <div class="card">
+      <h3>Activity</h3>
+      <ul class="activity">
+        {% for e in events %}
+        <li><span class="when-at">{{ e.at|dubai }}</span> {{ e.what }}{% if e.by and e.by != "system" %} <span class="by">{{ e.by }}</span>{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if post.publish_results %}
+    <div class="card">
+      <h3>Publishing{% if post.publish_results.dry_run %} (test mode, nothing posted){% endif %}</h3>
+      <ul class="results">
+        {% for r in post.publish_results.channels %}
+        <li>{{ "✅" if r.ok else "❌" }} <b>{{ r.label }}</b> <span class="muted">{{ r.name }}</span>{% if r.error %}: <span class="small" style="color:var(--red)">{{ r.error }}</span>{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if c %}
+    <div class="card">
+      {% for label, key in [("Facebook", "facebook"), ("X (Twitter)", "x"), ("Threads", "threads")] %}
+      <div class="caption-head"><b>{{ label }} <span class="muted" style="font-weight:400">· {{ (c[key] or "")|length }} chars</span></b>
+        <button class="copy" onclick="copyText(this,'cap-{{ key }}')">Copy</button></div>
+      <div class="caption" id="cap-{{ key }}">{{ c[key] }}</div>
+      {% endfor %}
+      {% if c.threads_topic %}<p class="muted small">Threads topic: {{ c.threads_topic }}</p>{% endif %}
+    </div>
+    {% endif %}
+
+    {% if b %}
+    <div class="card">
+      <h3>Behind the scenes</h3>
+      <dl class="kv">
+        <dt>Layout</dt><dd>{{ b.template }}</dd>
+        <dt>Service</dt><dd>{{ b.service }}</dd>
+        <dt>Angle</dt><dd>{{ b.angle }}</dd>
+        <dt>On the image</dt><dd>{{ b.headline_top }} <b>{{ b.headline_highlight }}</b>{% if b.subheadline %} · {{ b.subheadline }}{% endif %}{% if b.body %} · {{ b.body }}{% endif %}</dd>
+        {% if b.benefits %}<dt>Benefits</dt><dd>{{ b.benefits|join(" · ") }}</dd>{% endif %}
+        {% if b.bullets and b.template == "checklist" %}<dt>Points</dt><dd>{{ b.bullets|join(" · ") }}</dd>{% endif %}
+        <dt>Image prompt</dt><dd class="small">{{ b.image_prompt }}</dd>
+        {% if b._plan %}<dt>Variety plan</dt><dd class="small">{{ b._plan.post_type|replace("_", " ") }} · for {{ b._plan.industry }} · {{ b._plan.person }} · {{ b._plan.setting }} · {{ b._plan.shot }} · {{ b._plan.light }} · caption: {{ b._plan.caption_style }}</dd>{% endif %}
+        {% if b._variety_warning or c._variety_warning %}<dt>Variety</dt><dd class="small" style="color:var(--amber)">Could not fully avoid: {{ ((b._variety_warning or []) + (c._variety_warning or []))|join("; ") }}</dd>{% endif %}
+        <dt>Text AI</dt><dd class="small">{{ b._model }}{% if c._model and c._model != b._model %} / {{ c._model }}{% endif %}</dd>
+        {% if b._gemini_account %}<dt>Gemini account</dt><dd>{{ b._gemini_account }}</dd>{% endif %}
+      </dl>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById("badge").innerHTML = badge({{ post.status|tojson }});
+const CONFIRM = {
+  approve: {{ (("Approve this post? It will be published on " ~ (when|dubai) ~ " (Dubai time) to " ~ targets ~ ".") if future else "Publish this post to " ~ targets ~ " now?")|tojson }},
+  "publish-now": {{ ("Publish this post to " ~ targets ~ " right now?")|tojson }},
+  cancel: "Cancel this post? Nothing will be published.",
+};
+async function act(what) {
+  const body = what === "reject" ? { reason: document.getElementById("reason").value } : undefined;
+  if (CONFIRM[what] && !confirm(CONFIRM[what])) return;
+  document.querySelectorAll("button").forEach((b) => (b.disabled = true));
+  try {
+    await api("POST", `/api/posts/{{ post.id }}/${what}`, body);
+    location.reload();
+  } catch (e) {
+    toast(e.message, true);
+    document.querySelectorAll("button").forEach((b) => (b.disabled = false));
+  }
+}
+async function reschedule() {
+  const v = document.getElementById("new-time").value;
+  if (!v) return toast("Pick a date and time", true);
+  try {
+    await api("POST", "/api/posts/{{ post.id }}/reschedule", { publish_at: v });
+    location.reload();
+  } catch (e) { toast(e.message, true); }
+}
+{% if working %}
+setTimeout(async function check() {
+  try {
+    const p = await api("GET", "/api/posts/{{ post.id }}");
+    if (p.status !== {{ post.status|tojson }}) return location.reload();
+  } catch (e) {}
+  setTimeout(check, 3000);
+}, 3000);
+{% endif %}
+</script>
+{% endblock %}

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="center">
+  <div class="card narrow stack" style="max-width:520px;text-align:center">
+    <img src="/brand-assets/logo/logo-main-original.png" alt="{{ brand.name }}" style="height:40px;margin:0 auto">
+    <h1 style="font-size:22px">{{ title }}</h1>
+    {% if text %}<p class="muted" style="margin:0">{{ text }}</p>{% endif %}
+    {% if results %}
+    <ul class="results" style="text-align:left">
+      {% for r in results %}
+      <li>{{ "✅" if r.ok else "❌" }} <b>{{ r.label }}</b> <span class="muted">{{ r.name }}</span>{% if r.error %}: <span class="small" style="color:var(--red)">{{ r.error }}</span>{% endif %}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if post and post.final_image_url %}<img class="bigimg" src="{{ post.final_image_url }}" alt="">{% endif %}
+  </div>
+</div>
+{% endblock %}

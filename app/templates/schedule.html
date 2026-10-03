@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}Schedule{% endblock %}
+{% set prepare_names = {15: "15 minutes", 30: "30 minutes", 60: "1 hour", 120: "2 hours", 180: "3 hours", 360: "6 hours", 720: "12 hours"} %}
+{% block content %}
+<div class="row" style="justify-content:space-between;align-items:baseline">
+  <h1>Schedule</h1>
+  <span class="muted small">Dubai time now: {{ now_dubai }}</span>
+</div>
+<p class="muted" style="margin-top:0">Set the times to post every day. At each time the agent picks a fresh topic, makes the post and publishes it.</p>
+
+<div class="grid2" style="margin-top:18px">
+  <section class="card stack" id="schedule-form">
+    <div>
+      <label class="switch"><input type="checkbox" id="enabled" {{ "checked" if schedule.enabled }}> Automatic daily posting</label>
+      <p class="muted small" style="margin:6px 0 0">Turning it off stops new posts. Posts that are already prepared stay until you cancel them.</p>
+    </div>
+
+    <div>
+      <label class="lbl">Posting times (Dubai)</label>
+      <div class="sched-times" id="times"></div>
+      <button type="button" class="btn ghost" style="margin-top:10px" id="add-time">+ Add a time</button>
+    </div>
+
+    <div>
+      <label class="lbl">Days</label>
+      <div class="daychips">
+        {% for name in day_names %}
+        <label><input type="checkbox" name="day" value="{{ loop.index0 }}" {{ "checked" if loop.index0 in schedule.days }}><span>{{ name }}</span></label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div>
+      <label class="lbl">Approval</label>
+      <label class="choice"><input type="radio" name="approval" value="ask" {{ "checked" if schedule.approval == "ask" }}>
+        <span><b>Ask me first</b> (recommended)<br><span class="muted small">Each post is made ahead of time and emailed to you. Approve it and it goes out exactly at its time.</span></span></label>
+      <label class="choice"><input type="radio" name="approval" value="auto" {{ "checked" if schedule.approval == "auto" }}>
+        <span><b>Fully automatic</b><br><span class="muted small">Posts are made and published by themselves. You still get an email for each one, with Cancel and Redo buttons, before it goes out.</span></span></label>
+    </div>
+
+    <div>
+      <label class="lbl" for="prepare">Make each post</label>
+      <div class="row">
+        <select id="prepare" style="border:1px solid var(--line);border-radius:10px;padding:9px 11px;font:500 14px Inter">
+          {% for m in prepare_choices %}<option value="{{ m }}" {{ "selected" if m == schedule.prepare_minutes }}>{{ prepare_names[m] }}</option>{% endfor %}
+        </select>
+        <span class="muted small">before its posting time (time for you to review it)</span>
+      </div>
+    </div>
+
+    <div id="no-answer-box">
+      <label class="lbl">If I haven't approved a post by its time</label>
+      <label class="choice"><input type="radio" name="if_no_answer" value="wait" {{ "checked" if schedule.if_no_answer == "wait" }}>
+        <span><b>Wait for me</b><br><span class="muted small">It is published right after I approve it, even if that is later.</span></span></label>
+      <label class="choice"><input type="radio" name="if_no_answer" value="publish" {{ "checked" if schedule.if_no_answer == "publish" }}>
+        <span><b>Publish it anyway</b> at its time</span></label>
+    </div>
+
+    <div class="row">
+      <button class="btn big" id="save">Save schedule</button>
+      <span class="muted small" id="summary"></span>
+    </div>
+  </section>
+
+  <section class="card daylist">
+    <h2>Today and the next days</h2>
+    {% if not days %}
+      <p class="muted">Nothing planned yet. Turn on automatic daily posting, or give a post a time on the Posts page.</p>
+    {% endif %}
+    {% for day in days %}
+      <h3>{{ day.label }}</h3>
+      {% for r in day.rows %}
+      <div class="slot {{ 'past' if r.past }}">
+        <div class="t">{{ r.when|dubai_time }}{% if not r.slot %}<small>single post</small>{% endif %}</div>
+        <div class="what">
+          {% if r.posts %}
+            {% for p in r.posts[:1] %}
+            {% if p.final_image_url %}<img src="{{ p.final_image_url }}" alt="">{% endif %}
+            <div style="min-width:0">
+              <span class="status-badge" data-status="{{ p.status }}"></span>
+              <div class="title"><a href="/posts/{{ p.id }}">{{ (p.captions or {}).title or p.idea }}</a></div>
+            </div>
+            {% endfor %}
+          {% elif r.past %}
+            <span class="muted small">No post (this time had passed when the schedule was turned on, or the server was offline)</span>
+          {% else %}
+            <span class="muted small">Planned · topic is picked at {{ r.prepare_at|dubai_time }}</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    {% endfor %}
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const initialTimes = {{ schedule.times|tojson }};
+const timesBox = document.getElementById("times");
+
+function addTime(value) {
+  if (timesBox.children.length >= 8) return toast("At most 8 times per day", true);
+  const el = document.createElement("span");
+  el.className = "sched-time";
+  el.innerHTML = `<input type="time" value="${value || "12:00"}" required><button type="button" title="Remove">×</button>`;
+  el.querySelector("button").onclick = () => { el.remove(); summary(); };
+  el.querySelector("input").onchange = summary;
+  timesBox.appendChild(el);
+}
+
+function collect() {
+  return {
+    enabled: document.getElementById("enabled").checked,
+    times: [...timesBox.querySelectorAll("input")].map((i) => i.value).filter(Boolean),
+    days: [...document.querySelectorAll("input[name=day]:checked")].map((i) => Number(i.value)),
+    approval: document.querySelector("input[name=approval]:checked").value,
+    prepare_minutes: Number(document.getElementById("prepare").value),
+    if_no_answer: document.querySelector("input[name=if_no_answer]:checked").value,
+  };
+}
+
+function summary() {
+  const s = collect();
+  document.getElementById("no-answer-box").hidden = s.approval !== "ask";
+  const n = new Set(s.times).size;
+  document.getElementById("summary").textContent = s.enabled
+    ? `${n} post${n === 1 ? "" : "s"} a day · ${s.days.length} day${s.days.length === 1 ? "" : "s"} a week · ${s.approval === "ask" ? "asks you first" : "fully automatic"}`
+    : "Automatic posting is off";
+}
+
+document.getElementById("add-time").onclick = () => { addTime(""); summary(); };
+document.getElementById("schedule-form").addEventListener("change", summary);
+document.querySelectorAll("[data-status]").forEach((el) => (el.innerHTML = badge(el.dataset.status)));
+
+document.getElementById("save").onclick = async (e) => {
+  const btn = e.target;
+  btn.disabled = true;
+  try {
+    await api("POST", "/api/schedule", collect());
+    toast("Schedule saved ✓");
+    setTimeout(() => location.reload(), 900);
+  } catch (err) { toast(err.message, true); btn.disabled = false; }
+};
+
+(initialTimes.length ? initialTimes : []).forEach(addTime);
+summary();
+</script>
+{% endblock %}
