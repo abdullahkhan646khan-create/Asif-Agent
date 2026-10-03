@@ -35,14 +35,14 @@ async def heartbeat_loop() -> None:
         log.info("Heartbeat off (only runs on a public https address)")
         return
     log.info("Heartbeat on: %s every %s minutes", url, settings.heartbeat_minutes)
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
         while True:
-            await asyncio.sleep(settings.heartbeat_minutes * 60)
             try:
                 r = await client.get(url)
                 log.info("Heartbeat: %s %s", r.status_code, r.text[:60])
             except Exception as e:
                 log.warning("Heartbeat could not reach %s: %s", url, e)
+            await asyncio.sleep(settings.heartbeat_minutes * 60)
 
 
 @asynccontextmanager

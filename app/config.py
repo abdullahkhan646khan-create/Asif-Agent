@@ -1,3 +1,4 @@
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -95,7 +96,11 @@ class Settings(BaseSettings):
 
     @property
     def base_url(self) -> str:
-        return self.public_base_url.rstrip("/")
+        chosen = self.public_base_url
+        render_external = os.environ.get("RENDER_EXTERNAL_URL")
+        if chosen in ("", "http://localhost:8000") and render_external and render_external.startswith("https://"):
+            chosen = render_external
+        return chosen.rstrip("/")
 
 
 @lru_cache
