@@ -68,8 +68,9 @@ const FILTER_NAMES = { all: "All", approval: "Needs approval", scheduled: "Sched
 function card(p) {
   const c = p.captions || {};
   const title = c.title || p.idea;
-  const img = p.final_image_url && !WORKING.includes(p.status)
-    ? `<img src="${esc(p.final_image_url)}" alt="" loading="lazy">`
+  const src = (p.brief && p.brief._thumb) || p.final_image_url;
+  const img = src && !WORKING.includes(p.status)
+    ? `<img src="${esc(src)}" alt="" loading="lazy" decoding="async">`
     : `<div class="wait">${WORKING.includes(p.status) ? '<div class="spinner"></div>' : ''}${esc(p.stage_note || '')}</div>`;
   const when = p.scheduled_for && !["published", "cancelled"].includes(p.status)
     ? `<div class="when">🕘 ${esc(dubai(p.scheduled_for))}</div>` : "";

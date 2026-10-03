@@ -535,6 +535,15 @@ def tpl_skyline(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
 RENDERERS = {"wave": tpl_wave, "spotlight": tpl_spotlight, "checklist": tpl_checklist, "skyline": tpl_skyline}
 
 
+def thumbnail(jpeg_bytes: bytes, width: int = 480) -> bytes:
+    """Small copy of a finished post for lists on the dashboard (about 30 KB instead of 300+ KB)."""
+    img = Image.open(io.BytesIO(jpeg_bytes)).convert("RGB")
+    img.thumbnail((width, width * 2), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=80, optimize=True, progressive=True)
+    return buf.getvalue()
+
+
 def compose(template: str, photo_bytes: bytes, content: dict, brand: Brand) -> bytes:
     """Build the finished post and return it as JPEG bytes."""
     if template not in RENDERERS:

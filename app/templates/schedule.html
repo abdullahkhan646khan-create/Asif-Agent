@@ -75,7 +75,7 @@
         <div class="what">
           {% if r.posts %}
             {% for p in r.posts[:1] %}
-            {% if p.final_image_url %}<img src="{{ p.final_image_url }}" alt="">{% endif %}
+            {% if p.final_image_url %}<img src="{{ (p.brief or {})._thumb or p.final_image_url }}" alt="" loading="lazy">{% endif %}
             <div style="min-width:0">
               <span class="status-badge" data-status="{{ p.status }}"></span>
               <div class="title"><a href="/posts/{{ p.id }}">{{ (p.captions or {}).title or p.idea }}</a></div>

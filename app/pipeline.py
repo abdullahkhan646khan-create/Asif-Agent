@@ -15,7 +15,7 @@ from datetime import timedelta
 
 from . import emailer, publisher
 from .brand import load_brand
-from .composer import compose
+from .composer import compose, thumbnail
 from .imagegen import pool
 from .store import get_store
 from .timeutil import fmt, iso, now_utc, parse
@@ -151,7 +151,10 @@ async def generate(post_id: str) -> None:
                 final = await asyncio.to_thread(compose, post["brief"]["template"], raw, post["brief"], brand)
                 path = f"{post_id}/v{v}.jpg"
                 url = await store.save_file(path, final, "image/jpeg")
-                post = await store.update_post(post_id, final_image_path=path, final_image_url=url)
+                thumb = await asyncio.to_thread(thumbnail, final)
+                thumb_url = await store.save_file(f"{post_id}/v{v}-thumb.jpg", thumb, "image/jpeg")
+                post = await store.update_post(post_id, final_image_path=path, final_image_url=url,
+                                               brief={**post["brief"], "_thumb": thumb_url})
 
             stage = "emailing"
             post = await _stage(post_id, stage)
@@ -167,10 +170,18 @@ async def generate(post_id: str) -> None:
                     await note(post_id, f"Version {v} ready · heads-up email could not be sent ({e})")
                 await store.claim(post_id, ["emailing"], "scheduled", stage_note=f"Publishes automatically · {fmt(when)}")
             else:
-                await emailer.send_review(post, image)
-                await note(post_id, f"Version {v} ready · review email sent")
+                # the dashboard can always approve it, so a failed email must not lose the post
+                email_problem = None
+                try:
+                    await emailer.send_review(post, image)
+                    await note(post_id, f"Version {v} ready · review email sent")
+                except Exception as e:
+                    log.exception("Review email for post %s failed", post_id)
+                    email_problem = (f"The review email could not be sent ({type(e).__name__}: {e}). "
+                                     "Approve or reject it here on the dashboard.")
+                    await note(post_id, f"Version {v} ready · review email could NOT be sent: {e}")
                 waiting = f"Waiting for your approval · for {fmt(when)}" if when else STAGE_LABEL["pending_review"]
-                await store.claim(post_id, ["emailing"], "pending_review", stage_note=waiting)
+                await store.claim(post_id, ["emailing"], "pending_review", stage_note=waiting, error=email_problem)
         except Stopped:
             log.info("Post %s was cancelled while being made", post_id)
         except Exception as e:

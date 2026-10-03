@@ -662,3 +662,19 @@ def test_new_cookie_in_env_wins_over_saved_copy(monkeypatch):
         monkeypatch.setattr(s, "gemini_b_1psid", "")
         monkeypatch.setattr(s, "gemini_b_1psidts", "")
     run(go())
+
+
+def test_failed_review_email_keeps_the_post_for_the_dashboard(client, monkeypatch):
+    """If the email can't be sent (e.g. relay link not set), the post still waits for approval on the dashboard."""
+    async def broken_send(*a, **kw):
+        raise emailer.EmailError("EMAIL_RELAY_URL is not set yet")
+    monkeypatch.setattr(emailer, "send", broken_send)
+    post = client.post("/api/posts", json={"idea": "Network audit for hotels"}).json()
+    post = wait_for(client, post["id"], ["pending_review", "failed"])
+    assert post["status"] == "pending_review"
+    assert "could not be sent" in post["error"] and "EMAIL_RELAY_URL" in post["error"]
+    assert post["brief"]["_thumb"].endswith("-thumb.jpg")
+    thumb = client.get(post["brief"]["_thumb"].replace("http://testserver", ""))
+    full = client.get(post["final_image_url"].replace("http://testserver", ""))
+    assert thumb.status_code == 200 and len(thumb.content) < len(full.content) / 3
+    assert client.post(f"/api/posts/{post['id']}/approve").json()["status"] == "published"

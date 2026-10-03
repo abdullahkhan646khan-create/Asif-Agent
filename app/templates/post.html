@@ -19,7 +19,7 @@
       <div class="versions">
         {% for h in post.history|reverse %}
         <a href="{{ h.final_image_url or '#' }}" target="_blank" title="{{ h.reason or 'no reason given' }}">
-          {% if h.final_image_url %}<img src="{{ h.final_image_url }}" alt="">{% endif %}
+          {% if h.final_image_url %}<img src="{{ (h.brief or {})._thumb or h.final_image_url }}" alt="" loading="lazy">{% endif %}
           <span class="muted small">v{{ h.attempt }}{% if h.reason %}: {{ h.reason[:40] }}{% endif %}</span>
         </a>
         {% endfor %}

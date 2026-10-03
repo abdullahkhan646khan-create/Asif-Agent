@@ -92,6 +92,9 @@ async def _send_apps_script(to: list[str], subject: str, html: str, text: str, i
     s = get_settings()
     if not (s.email_relay_url and s.email_relay_secret):
         raise EmailError("Set EMAIL_RELAY_URL and EMAIL_RELAY_SECRET (see scripts/email_relay.gs)")
+    if not s.email_relay_url.startswith("https://"):
+        raise EmailError("EMAIL_RELAY_URL is not set yet: it must be the https://script.google.com/.../exec link "
+                         "from the email relay setup (scripts/email_relay.gs)")
     payload = {
         "secret": s.email_relay_secret, "to": ", ".join(to), "subject": subject, "html": html, "text": text,
         "from_name": f"{load_brand().name} Post Agent",
