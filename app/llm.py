@@ -130,7 +130,7 @@ async def _call_patiently(client, provider, key, model, messages, temperature) -
 
 async def ask_json(system: str, user: str, check: Callable[[dict], list[str]] | None = None,
                    temperature: float = 0.7) -> tuple[dict, str]:
-    """Ask for a JSON object. `check` returns a list of problems; the AI gets one chance to fix them.
+    """Ask for a JSON object. `check` returns a list of problems; the AI gets two chances to fix them.
 
     Returns (data, "provider/model"). Tries every configured model in order until one works.
     """
@@ -142,7 +142,7 @@ async def ask_json(system: str, user: str, check: Callable[[dict], list[str]] | 
         for provider, key, model in candidates:
             messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
             best = None
-            for _ in range(2):
+            for _ in range(3):
                 try:
                     reply = await _call_patiently(client, provider, key, model, messages, temperature)
                 except (LLMError, httpx.HTTPError) as e:
@@ -164,7 +164,7 @@ async def ask_json(system: str, user: str, check: Callable[[dict], list[str]] | 
                              {"role": "user", "content": "Fix these problems and reply with the full corrected JSON only:\n- "
                               + "\n- ".join(problems)}]
             if best is not None:
-                # Still has small problems after a retry; the caller cleans up what is left.
+                # Still has small problems after two fixes; the caller cleans up what is left.
                 return best, f"{provider}/{model}"
     raise LLMError("All text AI models failed: " + " | ".join(errors[-4:]))
 

@@ -150,6 +150,7 @@ def test_health(client):
     data = client.get("/health").json()
     assert data["ok"] is True and data["awake_since"] and data["version"] and "last_ok" in data["heartbeat"]
     assert client.head("/health").status_code == 200  # uptime checkers often use HEAD
+    assert client.get("/health?from=supabase").json()["last_visit"]["supabase"]  # the Supabase keep-awake job is visible
 
 
 def test_login_required():
@@ -737,3 +738,33 @@ def test_people_use_a_helmet_technician_instead_of_the_african_engineer():
     from app.variety import PEOPLE
     assert not any("african" in p.lower() for p in PEOPLE)
     assert any("safety helmet" in p for p in PEOPLE)
+
+
+def test_mistyped_post_link_is_not_found_not_a_database_error():
+    from app.store import SupabaseStore
+
+    async def go():
+        store = SupabaseStore("https://example.supabase.co", "sb_secret_test", "posts")
+
+        async def no_network(*a, **kw):
+            raise AssertionError("must not ask the database for a malformed id")
+        store._rest = no_network
+        return await store.get_post("8cedd695"), await store.claim("8cedd695", ["pending_review"], "scheduled")
+    assert run(go()) == (None, None)
+
+
+def test_text_is_never_cut_mid_thought():
+    from app.writer import _trim
+    cases = {
+        "Amanasoft migrates, hosts and connects, so Dubai developers can focus on building great products":
+            "Amanasoft migrates, hosts and connects",
+        "Custom, secure sites built by certified engineers – from design to ongoing support for every campus":
+            "Custom, secure sites built by certified engineers",
+        "Custom iOS & Android apps for Dubai logistics firms to track inventory, drivers and deliveries live":
+            "Custom iOS & Android apps for Dubai logistics firms to track inventory",
+        "Smart networks built and supported for growing businesses with offices in every emirate of the UAE":
+            "Smart networks built and supported for growing businesses with offices",
+    }
+    for text, expected in cases.items():
+        assert _trim(text, 80) == expected, _trim(text, 80)
+    assert _trim("Short and fine", 80) == "Short and fine"

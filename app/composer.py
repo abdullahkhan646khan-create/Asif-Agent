@@ -700,7 +700,7 @@ def tpl_cards(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
     mask = Image.new("L", canvas.size, 0)
     ImageDraw.Draw(mask).polygon([(-10, -10), (W + 10, -10), *reversed(edge)], fill=255)
     full = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    full.paste(cover(photo, W, photo_h, (0.5, 0.5)).convert("RGBA"), (0, 0))
+    full.paste(cover(photo, W, photo_h, (0.5, 0.15)).convert("RGBA"), (0, 0))  # crop from the bottom: heads stay in
     full.alpha_composite(vertical_shade((W, photo_h), col["deep_space"], [0, 190, photo_h], [175, 0, 0]))
     canvas.paste(full, (0, 0), mask.filter(ImageFilter.GaussianBlur(1.2)))
 

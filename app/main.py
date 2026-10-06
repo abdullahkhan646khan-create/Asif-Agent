@@ -29,6 +29,7 @@ APP_DIR = ROOT / "app"
 STARTED_AT = now_utc()
 # what /health reports, so anyone can see from outside that the keep-awake works
 HEARTBEAT = {"on": False, "every_minutes": settings.heartbeat_minutes, "last_ok": None, "last_error": None}
+LAST_VISIT = {"heartbeat": None, "supabase": None, "other": None}  # who visited /health last, and when
 
 
 async def heartbeat_loop() -> None:
@@ -142,12 +143,14 @@ def future_time(value: str | None):
 # ---------- heartbeat ----------
 
 @app.api_route("/health", methods=["GET", "HEAD"])
-async def health():
+async def health(request: Request):
     """Visited every few minutes by the built-in heartbeat and the Supabase keep-awake job
     (supabase/keep_awake.sql), so Render never sleeps and Supabase stays active.
     awake_since shows when the server last started: if it stays the same, the server never slept."""
+    source = request.query_params.get("from")
+    LAST_VISIT[source if source in LAST_VISIT else "other"] = iso(now_utc())
     info = {"version": os.environ.get("RENDER_GIT_COMMIT", "local")[:7], "awake_since": iso(STARTED_AT),
-            "heartbeat": HEARTBEAT}
+            "heartbeat": HEARTBEAT, "last_visit": LAST_VISIT}
     try:
         await get_store().ping()
         return {"ok": True, "store": get_store().kind, **info}

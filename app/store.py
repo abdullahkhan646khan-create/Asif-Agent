@@ -168,6 +168,14 @@ class LocalStore:
         return True
 
 
+def _is_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(str(value))
+        return True
+    except ValueError:
+        return False
+
+
 class SupabaseStore:
     kind = "supabase"
 
@@ -194,6 +202,8 @@ class SupabaseStore:
         return rows[0]
 
     async def get_post(self, post_id: str) -> dict | None:
+        if not _is_uuid(post_id):
+            return None  # an old or mistyped link is "not found", not a database error
         rows = await self._rest("GET", "posts", params={"id": f"eq.{post_id}", "select": "*"})
         return rows[0] if rows else None
 
@@ -205,6 +215,8 @@ class SupabaseStore:
         return rows[0]
 
     async def claim(self, post_id: str, from_statuses: list[str], to_status: str, **fields: Any) -> dict | None:
+        if not _is_uuid(post_id):
+            return None
         fields.update(status=to_status, updated_at=now_iso())
         rows = await self._rest(
             "PATCH", "posts", params={"id": f"eq.{post_id}", "status": f"in.({','.join(from_statuses)})"},

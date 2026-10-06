@@ -37,8 +37,8 @@ LAYOUTS = {
               "space all around it (the photo is cut into a circle); nothing important near the edges or corners.",
     "cards": "Tall post: the photo on top, 3 benefit cards with check icons across its lower edge, the headline and "
              "subheadline centred below on a light background. Good for benefits, features and service promotion. "
-             "Photo composition: the main subject is centred in the upper two thirds of the image; the bottom third "
-             "is simple background (the benefit cards cover it).",
+             "Photo composition: the main subject is in the middle of the image with clear space above the head; "
+             "the bottom quarter is simple background such as floor or desk (the benefit cards cover it).",
     "frame": "Clean editorial look: the photo fills the post and a white card at the bottom carries the headline, "
              "subheadline and 3 benefit tags. Good for industry use cases, tips and customer-focused messages. Photo "
              "composition: the main subject is in the upper half of the image; the lower half is calm and simple "
@@ -59,6 +59,8 @@ def unsupported_claims(texts) -> list[str]:
 
 
 LIMITS = {"headline_top": 32, "headline_highlight": 18, "subheadline": 80, "body": 190, "benefit": 20, "bullet": 38}
+# the AI is asked for a little less than the real limit, so it rarely goes over and nothing has to be cut
+AIM = {**LIMITS, "headline_top": 30, "subheadline": 70, "body": 170, "bullet": 34}
 NEEDS_BENEFITS = ("wave", "spotlight", "skyline", "split", "circle", "cards", "frame")
 NEEDS_SUBHEADLINE = ("wave", "spotlight", "split", "circle", "cards", "frame")
 
@@ -86,13 +88,15 @@ CONTENT FOCUS (most important)
 Every post shows the customer's problem or goal, how {brand.name} solves it, and concrete benefits.
 - headline_top + headline_highlight = the result the customer wants, read as one headline. Examples:
   "Never miss" + "A Call", "Protect your business from" + "Cyber Threats", "See everything," + "Stop Threats",
-  "Accelerate your business with" + "AI-Driven Networks". headline_top max {LIMITS['headline_top']} characters,
-  headline_highlight (shown big) max {LIMITS['headline_highlight']} characters.
-- subheadline: how {brand.name} delivers it and for whom, max {LIMITS['subheadline']} characters.
-- benefits: exactly 3 concrete benefits of 2-3 words each, max {LIMITS['benefit']} characters each
+  "Accelerate your business with" + "AI-Driven Networks". headline_top max {AIM['headline_top']} characters,
+  headline_highlight (shown big) max {AIM['headline_highlight']} characters.
+- subheadline: how {brand.name} delivers it and for whom, max {AIM['subheadline']} characters.
+- benefits: exactly 3 concrete benefits of 2-3 words each, max {AIM['benefit']} characters each
   (e.g. "24/7 monitoring", "Remote viewing", "Lower costs"). Never vague words like "Quality" or "Best service".
-- bullets: only for the checklist layout, 3-4 points of max {LIMITS['bullet']} characters; otherwise [].
-- body: only for the skyline layout, 1-2 sentences of max {LIMITS['body']} characters that explain the solution
+  Every benefit, bullet and headline must be natural, grammatical English ("Replies in seconds", never
+  "Seconds replies").
+- bullets: only for the checklist layout, 3-4 points of max {AIM['bullet']} characters; otherwise [].
+- body: only for the skyline layout, 1-2 sentences of max {AIM['body']} characters that explain the solution
   and its benefits; otherwise "".
 - No calls to action on the image ("Book a demo", "Call now" and similar belong in the captions only).
 - Only use facts from the brand kit or the idea. Never invent numbers, prices, discounts, client names, awards
@@ -158,19 +162,19 @@ def _check_brief(brand: Brand):
             p.append("the skyline layout needs 'body'")
         for k in ("headline_top", "headline_highlight", "subheadline", "body"):
             if len(str(d.get(k) or "")) > LIMITS[k]:
-                p.append(f"'{k}' is {len(str(d[k]))} characters; max {LIMITS[k]}")
+                p.append(f"'{k}' is {len(str(d[k]))} characters; rewrite it shorter (max {AIM[k]}) as a complete phrase")
         benefits = _as_list(d.get("benefits"))
         if t in NEEDS_BENEFITS and len(benefits) != 3:
             p.append("give exactly 3 benefits")
         for b in benefits:
             if len(str(b)) > LIMITS["benefit"]:
-                p.append(f"benefit '{b}' is too long; max {LIMITS['benefit']} characters")
+                p.append(f"benefit '{b}' is too long; max {AIM['benefit']} characters")
         bullets = _as_list(d.get("bullets"))
         if t == "checklist" and not 3 <= len(bullets) <= 4:
             p.append("checklist layout needs 3-4 bullets")
         for b in bullets:
             if len(str(b)) > LIMITS["bullet"]:
-                p.append(f"bullet '{b}' is too long; max {LIMITS['bullet']} characters")
+                p.append(f"bullet '{b}' is too long; rewrite it shorter (max {AIM['bullet']} characters)")
         if len(str(d.get("image_prompt") or "").split()) < 30:
             p.append("image_prompt is too short; write 60-120 words")
         svc = d.get("service")
@@ -191,12 +195,29 @@ def _as_list(value) -> list[str]:
     return [str(v).strip() for v in (value or []) if str(v).strip()]
 
 
+# words a cut phrase must not end with ("…so developers can focus on")
+DANGLING = {"a", "an", "the", "and", "or", "but", "so", "to", "for", "of", "on", "in", "at", "by", "with", "from",
+            "into", "your", "our", "their", "its", "that", "which", "can", "every", "each", "all", "any", "this",
+            "these", "more", "most", "as", "than", "is", "are", "will", "while", "&", "-", "–", "—"}
+
+
 def _trim(text: str, limit: int) -> str:
+    """Shorten to the limit without ending mid-thought: cut at a comma, dash or full stop when one is near the
+    end, otherwise at a word, and never leave a dangling word like 'on' or 'and' at the end."""
     text = re.sub(r"\s+", " ", str(text or "")).strip()
     if len(text) <= limit:
         return text
-    cut = text[:limit].rsplit(" ", 1)[0]
-    return cut.rstrip(",;:-")
+    head = text[:limit + 1]
+    breaks = [m.start() for m in re.finditer(r"[.;:!?](?=\s)|,(?=\s)|\s[–—-]\s", head)]
+    good = [b for b in breaks if b >= limit * 0.4]
+    if good:
+        cut = head[:good[-1]]
+    else:
+        cut = head[:limit].rsplit(" ", 1)[0] if " " in head[:limit] else head[:limit]
+    words = cut.split()
+    while len(words) > 1 and words[-1].lower().strip(",;:") in DANGLING:
+        words.pop()
+    return " ".join(words).rstrip(",;:–—- ")
 
 
 def _clean_brief(d: dict, brand: Brand, template_pref: str | None) -> dict:
