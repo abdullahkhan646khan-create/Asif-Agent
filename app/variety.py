@@ -41,7 +41,7 @@ PEOPLE = [
     "a South Asian male engineer in a hard hat and safety vest",
     "a European woman IT manager in smart business attire",
     "a Filipino woman technician in a company polo shirt",
-    "an African man network engineer in a navy shirt",
+    "a field technician wearing a white safety helmet and a high-visibility vest",
     "a young Arab man in a smart casual shirt",
     "an East Asian woman software developer",
     "a small team of three colleagues of different backgrounds",
@@ -111,8 +111,9 @@ def make_plan(history: list[dict], service: str | None, post_type: str | None, t
         "light": _least_recent(LIGHTS, used("light"), rnd),
         "caption_style": _least_recent(CAPTION_STYLES, used("caption_style"), rnd),
     }
-    if template is None and plan["post_type"] == "benefits_list" and "checklist" in layout_choices:
-        plan["template"] = "checklist"
+    list_layouts = [t for t in ("checklist", "cards") if t in layout_choices]
+    if template is None and plan["post_type"] == "benefits_list" and list_layouts:
+        plan["template"] = _least_recent(list_layouts, used("template"), rnd)
     if plan["template"] == "skyline":
         plan["setting"], plan["light"] = "Dubai skyline at night", "night with city lights"
         if plan["shot"] in ("top-down flat lay", "close-up detail shot"):

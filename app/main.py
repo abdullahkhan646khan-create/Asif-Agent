@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
@@ -18,13 +19,16 @@ from .config import ROOT, get_settings
 from .imagegen import pool
 from .security import check_password, check_review_token
 from .store import StoreError, get_store
-from .timeutil import fmt, from_local_input, now_utc, parse, to_local_input
+from .timeutil import fmt, from_local_input, iso, now_utc, parse, to_local_input
 from .variety import POST_TYPES
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
 settings = get_settings()
 APP_DIR = ROOT / "app"
+STARTED_AT = now_utc()
+# what /health reports, so anyone can see from outside that the keep-awake works
+HEARTBEAT = {"on": False, "every_minutes": settings.heartbeat_minutes, "last_ok": None, "last_error": None}
 
 
 async def heartbeat_loop() -> None:
@@ -35,12 +39,16 @@ async def heartbeat_loop() -> None:
         log.info("Heartbeat off (only runs on a public https address)")
         return
     log.info("Heartbeat on: %s every %s minutes", url, settings.heartbeat_minutes)
+    HEARTBEAT["on"] = True
     async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
         while True:
             try:
-                r = await client.get(url)
+                r = await client.get(url, params={"from": "heartbeat"})
+                r.raise_for_status()
+                HEARTBEAT["last_ok"], HEARTBEAT["last_error"] = iso(now_utc()), None
                 log.info("Heartbeat: %s %s", r.status_code, r.text[:60])
             except Exception as e:
+                HEARTBEAT["last_error"] = f"{iso(now_utc())} {e}"[:200]
                 log.warning("Heartbeat could not reach %s: %s", url, e)
             await asyncio.sleep(settings.heartbeat_minutes * 60)
 
@@ -133,14 +141,18 @@ def future_time(value: str | None):
 
 # ---------- heartbeat ----------
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health():
-    """Visited every 10 minutes by the built-in heartbeat (and optionally cron-job.org) to keep Render awake and Supabase active."""
+    """Visited every few minutes by the built-in heartbeat and the Supabase keep-awake job
+    (supabase/keep_awake.sql), so Render never sleeps and Supabase stays active.
+    awake_since shows when the server last started: if it stays the same, the server never slept."""
+    info = {"version": os.environ.get("RENDER_GIT_COMMIT", "local")[:7], "awake_since": iso(STARTED_AT),
+            "heartbeat": HEARTBEAT}
     try:
         await get_store().ping()
-        return {"ok": True, "store": get_store().kind}
+        return {"ok": True, "store": get_store().kind, **info}
     except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)[:200]}, status_code=200)
+        return JSONResponse({"ok": False, "error": str(e)[:200], **info}, status_code=200)
 
 
 # ---------- login ----------

@@ -1,4 +1,4 @@
-"""Render the 3 post layouts with a sample photo, so you can check the design without any API keys.
+"""Render every post layout with a sample photo, so you can check the design without any API keys.
 
 Run:  .venv/bin/python scripts/preview_templates.py [path/to/photo.jpg]
 Output goes to data/previews/.

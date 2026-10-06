@@ -250,6 +250,20 @@ async def alert_missed(post: dict):
     )
 
 
+async def alert_slots_missed(slots: list):
+    s = get_settings()
+    when = ", ".join(fmt(x) for x in slots)
+    await send_alert(
+        f"slots_missed_{slots[-1].isoformat()}", f"⏰ {len(slots)} scheduled post{'s' if len(slots) > 1 else ''} not made",
+        "Posting times were missed",
+        [f"No post was made for: {when} (Dubai time).",
+         "The server was asleep at that time, so the schedule could not run. Keep it awake with the "
+         "heartbeat and the Supabase keep-awake job (supabase/keep_awake.sql).",
+         f"The next posting times will work as usual once it stays awake: {s.base_url}/schedule"],
+        throttle_hours=0,
+    )
+
+
 async def alert_post_failed(post: dict):
     s = get_settings()
     await send_alert(

@@ -11,7 +11,7 @@ import logging
 import re
 from datetime import date, datetime, time, timedelta
 
-from . import pipeline
+from . import emailer, pipeline
 from .store import get_store
 from .timeutil import TZ, fmt, iso, local, now_utc, parse
 
@@ -28,6 +28,7 @@ DEFAULT = {
 PREPARE_CHOICES = (15, 30, 60, 120, 180, 360, 720)
 DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 LATE_CREATE = timedelta(hours=1)  # after this, a posting time that was missed is skipped
+LOOK_BACK = timedelta(hours=24)  # skipped times this far back are reported by email (once)
 TICK_SECONDS = 60
 _lock = asyncio.Lock()
 
@@ -112,12 +113,12 @@ async def prepare_due(now: datetime | None = None) -> list[dict]:
     if not schedule["enabled"]:
         return []
     store = get_store()
-    made = []
+    made, missed = [], []
     async with _lock:
         done = list(await store.get_setting("schedule_slots_done") or [])
         prepare = timedelta(minutes=schedule["prepare_minutes"])
         saved_at = parse(schedule.get("saved_at"))
-        for slot in slots_between(schedule, now - LATE_CREATE - timedelta(minutes=1), now + prepare):
+        for slot in slots_between(schedule, now - LOOK_BACK, now + prepare):
             key = slot_key(slot)
             if key in done or now < slot - prepare:
                 continue
@@ -127,6 +128,7 @@ async def prepare_due(now: datetime | None = None) -> list[dict]:
             await store.set_setting("schedule_slots_done", done[-500:])  # mark first: never two posts per time
             if now - slot > LATE_CREATE:
                 log.warning("Posting time %s was missed while the server was offline; skipped", key)
+                missed.append(slot)
                 continue
             try:
                 post = await pipeline.create(
@@ -138,6 +140,8 @@ async def prepare_due(now: datetime | None = None) -> list[dict]:
                 continue
             log.info("Prepared post %s for %s", post["id"], fmt(slot))
             made.append(post)
+    if missed:
+        await emailer.alert_slots_missed(missed)
     return made
 
 

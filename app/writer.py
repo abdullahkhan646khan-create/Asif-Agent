@@ -26,6 +26,23 @@ LAYOUTS = {
                "night under a starry deep-blue sky; the top third is dark night sky; the technology subject (glowing "
                "light streams, servers, a person at work or a device) sits in the middle; the bottom quarter is "
                "darker and calm.",
+    "split": "Strong service statement with 3 numbered benefits: a dark navy panel on the right holds the headline, "
+             "a short subheadline and the benefits as a numbered list; the photo fills a tall panel on the left with "
+             "a diagonal edge. Good for infrastructure, cabling, networks, security and why-choose-us posts. Photo "
+             "composition: the main subject (person or equipment) is in the central vertical third of the image and "
+             "fills it from top to bottom; the left and right thirds are only simple background.",
+    "circle": "Modern tech look: a bright blue-purple gradient, the photo inside a big circle with orbit rings, the "
+              "headline at the top and the 3 benefits as rounded tags. Best for AI, software, apps, chatbots, cloud "
+              "and automation. Photo composition: the main subject is centred in the middle of the image with calm "
+              "space all around it (the photo is cut into a circle); nothing important near the edges or corners.",
+    "cards": "Tall post: the photo on top, 3 benefit cards with check icons across its lower edge, the headline and "
+             "subheadline centred below on a light background. Good for benefits, features and service promotion. "
+             "Photo composition: the main subject is centred in the upper two thirds of the image; the bottom third "
+             "is simple background (the benefit cards cover it).",
+    "frame": "Clean editorial look: the photo fills the post and a white card at the bottom carries the headline, "
+             "subheadline and 3 benefit tags. Good for industry use cases, tips and customer-focused messages. Photo "
+             "composition: the main subject is in the upper half of the image; the lower half is calm and simple "
+             "(desk, floor, wall or a soft blurred background), because a white card covers it.",
 }
 
 # Promises the brand can't back up: guarantees, perfection, awards, unconfirmed counts ("20 years", "500 clients").
@@ -42,7 +59,8 @@ def unsupported_claims(texts) -> list[str]:
 
 
 LIMITS = {"headline_top": 32, "headline_highlight": 18, "subheadline": 80, "body": 190, "benefit": 20, "bullet": 38}
-NEEDS_BENEFITS = ("wave", "spotlight", "skyline")
+NEEDS_BENEFITS = ("wave", "spotlight", "skyline", "split", "circle", "cards", "frame")
+NEEDS_SUBHEADLINE = ("wave", "spotlight", "split", "circle", "cards", "frame")
 
 
 # ---------- step 1: creative director ----------
@@ -88,7 +106,7 @@ Reply with ONLY this JSON object:
 {{"post_type": "service_promo | benefits_list | problem_solution | tip | industry_use | greeting | brand_awareness",
   "service": "<exact service name from the list, or General>",
   "angle": "<one sentence: the customer problem, our solution and the main benefit>",
-  "template": "wave | spotlight | checklist | skyline",
+  "template": "{' | '.join(TEMPLATES)}",
   "headline_top": "...", "headline_highlight": "...", "subheadline": "...", "body": "...",
   "benefits": ["...", "...", "..."], "bullets": [], "image_prompt": "..."}}"""
 
@@ -134,7 +152,7 @@ def _check_brief(brand: Brand):
         for k in ("headline_top", "headline_highlight", "image_prompt"):
             if not str(d.get(k) or "").strip():
                 p.append(f"'{k}' is missing")
-        if t in ("wave", "spotlight") and not str(d.get("subheadline") or "").strip():
+        if t in NEEDS_SUBHEADLINE and not str(d.get("subheadline") or "").strip():
             p.append("'subheadline' is missing")
         if t == "skyline" and not str(d.get("body") or "").strip():
             p.append("the skyline layout needs 'body'")

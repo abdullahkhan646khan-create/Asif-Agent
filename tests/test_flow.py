@@ -4,6 +4,7 @@ Run:  .venv/bin/python -m pytest -q
 """
 import asyncio
 import base64
+import io
 import json
 import os
 import re
@@ -24,6 +25,7 @@ os.environ.update({
 
 import httpx  # noqa: E402
 import pytest  # noqa: E402
+from PIL import Image  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import emailer, imagegen, publisher, writer  # noqa: E402
@@ -145,7 +147,9 @@ def links(html):
 
 
 def test_health(client):
-    assert client.get("/health").json()["ok"] is True
+    data = client.get("/health").json()
+    assert data["ok"] is True and data["awake_since"] and data["version"] and "last_ok" in data["heartbeat"]
+    assert client.head("/health").status_code == 200  # uptime checkers often use HEAD
 
 
 def test_login_required():
@@ -513,10 +517,16 @@ def test_server_downtime_slot_is_still_made_late(monkeypatch):
         made.append(kw["scheduled_for"])
         return {"id": f"fake-{len(made)}"}
 
+    alerted = []
+
+    async def fake_alert(slots):
+        alerted.append(list(slots))
+
     async def go():
         from app.store import get_store
         monkeypatch.setattr(scheduler, "_lock", asyncio.Lock())  # a lock for this test's event loop
         monkeypatch.setattr(scheduler.pipeline, "create", fake_create)
+        monkeypatch.setattr(scheduler.emailer, "alert_slots_missed", fake_alert)
         now = now_utc().replace(second=0, microsecond=0)
         recent, old = now - timedelta(minutes=20), now - timedelta(minutes=90)
         await get_store().set_setting("schedule_slots_done", [])
@@ -527,10 +537,11 @@ def test_server_downtime_slot_is_still_made_late(monkeypatch):
         await scheduler.prepare_due(now)
         await scheduler.prepare_due(now)  # a second tick must not make it again
         await get_store().set_setting("schedule", dict(scheduler.DEFAULT))
-        return recent
+        return recent, old
 
-    recent = run(go())
+    recent, old = run(go())
     assert made == [recent]
+    assert alerted == [[old]]  # the skipped time is reported by email, once
 
 
 def test_bad_schedule_input_gets_clear_400(client):
@@ -698,9 +709,31 @@ def test_heartbeat_visits_its_own_health_page(monkeypatch):
         await asyncio.sleep(0.3)
         task.cancel()
     run(go())
-    assert visits and all(v == "https://asif-agent.onrender.com/health" for v in visits)
+    assert visits and all(v == "https://asif-agent.onrender.com/health?from=heartbeat" for v in visits)
+    assert main.HEARTBEAT["on"] and main.HEARTBEAT["last_ok"]  # shown on /health, so it can be checked from outside
 
     visits.clear()  # on your computer (http://localhost) it stays off
     monkeypatch.setattr(main.settings, "public_base_url", "http://localhost:8000")
     run(main.heartbeat_loop())
     assert visits == []
+
+
+def test_every_layout_renders_at_its_size():
+    from app.brand import load_brand
+    from app.composer import TEMPLATES, compose
+    buf = io.BytesIO()
+    Image.new("RGB", (1024, 1024), (40, 90, 160)).save(buf, "PNG")
+    content = {"headline_top": "Keep every branch office online", "headline_highlight": "Without Interruption",
+               "subheadline": "End-to-end managed networks, firewalls and Wi-Fi for growing companies across the UAE.",
+               "body": "Smart, scalable networks for UAE businesses.", "benefits": ["Instant notifications",
+               "Lower running costs", "Certified engineers"], "bullets": ["Live check-in", "Instant reports", "One dashboard"]}
+    assert len(TEMPLATES) >= 8
+    for t in TEMPLATES:
+        img = Image.open(io.BytesIO(compose(t, buf.getvalue(), {"template": t, **content}, load_brand())))
+        assert img.size == ((1080, 1350) if t in ("skyline", "cards") else (1080, 1080)), t
+
+
+def test_people_use_a_helmet_technician_instead_of_the_african_engineer():
+    from app.variety import PEOPLE
+    assert not any("african" in p.lower() for p in PEOPLE)
+    assert any("safety helmet" in p for p in PEOPLE)
