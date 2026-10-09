@@ -1,6 +1,6 @@
 """Test the Gemini cookies for real: log in, make pictures, and turn one into a finished Amanasoft post.
 
-Put the cookies in .env (GEMINI_A_1PSID / GEMINI_A_1PSIDTS, and B if you have it), then run:
+Put the cookies in .env (GEMINI_A_1PSID / GEMINI_A_1PSIDTS, and B and C if you have them), then run:
     .venv/bin/python scripts/check_gemini.py          # tests every account that has a cookie
     .venv/bin/python scripts/check_gemini.py A        # only account A
 Results are saved in data/gemini-test/.

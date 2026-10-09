@@ -58,6 +58,7 @@ SETTINGS = [
 SHOTS = ["close-up detail shot", "medium shot", "wide establishing shot", "over-the-shoulder shot",
          "low-angle hero shot", "top-down flat lay"]
 LIGHTS = ["bright daylight", "golden hour sunlight", "blue hour", "night with city lights", "soft studio lighting"]
+SKYLINE_LIGHT = "night with city lights"  # the Dubai-night layout always uses this light
 CAPTION_STYLES = [
     "open with a question the customer asks themselves",
     "open with a bold one-line statement",
@@ -96,6 +97,9 @@ def make_plan(history: list[dict], service: str | None, post_type: str | None, t
         recent = [t for t in used("template")[:1] if t]
         template = None
         layout_choices = [t for t in TEMPLATES if t not in recent]
+        if used("light")[:1] == [SKYLINE_LIGHT]:
+            # the Dubai-night layout is always lit at night: never right after a night-time picture
+            layout_choices = [t for t in layout_choices if t != "skyline"]
     else:
         layout_choices = [template]
 
@@ -111,11 +115,10 @@ def make_plan(history: list[dict], service: str | None, post_type: str | None, t
         "light": _least_recent(LIGHTS, used("light"), rnd),
         "caption_style": _least_recent(CAPTION_STYLES, used("caption_style"), rnd),
     }
-    list_layouts = [t for t in ("checklist", "cards") if t in layout_choices]
-    if template is None and plan["post_type"] == "benefits_list" and list_layouts:
-        plan["template"] = _least_recent(list_layouts, used("template"), rnd)
+    if template is None and plan["post_type"] == "benefits_list" and "cards" in layout_choices:
+        plan["template"] = "cards"  # benefit lists read best as the three benefit cards
     if plan["template"] == "skyline":
-        plan["setting"], plan["light"] = "Dubai skyline at night", "night with city lights"
+        plan["setting"], plan["light"] = "Dubai skyline at night", SKYLINE_LIGHT
         if plan["shot"] in ("top-down flat lay", "close-up detail shot"):
             plan["shot"] = _least_recent(["wide establishing shot", "medium shot", "over-the-shoulder shot",
                                           "low-angle hero shot"], used("shot"), rnd)

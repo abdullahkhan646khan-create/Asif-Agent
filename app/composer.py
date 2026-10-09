@@ -18,7 +18,7 @@ from .brand import Brand
 W = 1080
 SIZE = W  # square layouts
 FONTS = Path(__file__).resolve().parent / "assets" / "fonts"
-TEMPLATES = ("wave", "spotlight", "checklist", "skyline", "split", "circle", "cards", "frame")
+TEMPLATES = ("wave", "spotlight", "skyline", "split", "cards", "frame")
 
 ICON_PHONE = chr(0xE0CD)
 ICON_WEB = chr(0xE894)
@@ -469,63 +469,6 @@ def tpl_spotlight(photo: Image.Image, content: dict, brand: Brand) -> Image.Imag
     return canvas.convert("RGB")
 
 
-def tpl_checklist(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
-    col = brand.colors
-    footer_y = 985
-    canvas = gradient((SIZE, SIZE), ["#FFFFFF", "#EEF2FB"], 90).convert("RGBA")
-    d = ImageDraw.Draw(canvas)
-
-    # photo on the right, with a curved left edge and a brand-gradient ribbon
-    edge = smooth_curve([(640, -10), (590, 260), (640, 560), (600, 820), (630, 1000)])
-    ribbon = [(x - 16, y) for x, y in edge]
-    rib_mask = Image.new("L", canvas.size, 0)
-    ImageDraw.Draw(rib_mask).polygon([*ribbon, (SIZE + 10, 1000), (SIZE + 10, -10)], fill=255)
-    rib = gradient((SIZE, SIZE), [col["brand_cyan"], col["brand_blue"], col["brand_purple"]], 90).convert("RGBA")
-    canvas.paste(rib, (0, 0), rib_mask)
-    mask = Image.new("L", canvas.size, 0)
-    ImageDraw.Draw(mask).polygon([*edge, (SIZE + 10, 1000), (SIZE + 10, -10)], fill=255)
-    left = int(min(p[0] for p in edge))
-    region = cover(photo, SIZE - left, footer_y, (0.5, 0.5)).convert("RGBA")
-    full = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    full.paste(region, (left, 0))
-    canvas.paste(full, (0, 0), mask.filter(ImageFilter.GaussianBlur(1.2)))
-
-    paste_logo(canvas, brand.logo_color, (52, 52, 332, 120))
-
-    x, max_w = 56, 488
-    y = text_stack(canvas, x, 170, 400, [
-        {"text": content["headline_top"], "weight": 800, "max_w": max_w, "size": 50, "min": 30, "lines": 2,
-         "fill": rgb(col["navy"], 255), "line_gap": -4},
-        {"text": content["headline_highlight"], "weight": 900, "max_w": max_w, "size": 78, "min": 40, "lines": 2,
-         "fill": brand.profile["visual"]["logo_gradient"], "dx": -2, "line_gap": -2},
-    ])
-    y += 26
-
-    bullets = [b for b in content.get("bullets") or content.get("benefits") or [] if b][:4]
-    limit = 940
-    fb, need = None, 0
-    for size in range(32, 21, -1):
-        fb = font(600, size)
-        need = sum(max(min(len(wrap(b, fb, max_w - 64)), 2) * (line_height(fb) + 2), 44) + 30 for b in bullets)
-        if y + need <= limit:
-            break
-    extra = min(max(limit - (y + need), 0) // (len(bullets) + 1), 34) if bullets else 0
-    y += extra
-    for b in bullets:
-        lines = wrap(b, fb, max_w - 64)[:2]
-        box = (x, y + 2, x + 40, y + 42)
-        d.rounded_rectangle(box, 9, fill=rgb(col["accent_yellow"], 255))
-        d.text(((box[0] + box[2]) / 2, (box[1] + box[3]) / 2), ICON_CHECK, font=font("icons", 32), fill=rgb(col["navy"], 255), anchor="mm")
-        ty = y + 22 - (len(lines) * (line_height(fb) + 2)) / 2 + (1 if len(lines) == 1 else 12)
-        for ln in lines:
-            d.text((x + 62, ty), ln, font=fb, fill=rgb(col["navy"], 255))
-            ty += line_height(fb) + 2
-        y += max(len(lines) * (line_height(fb) + 2), 44) + 30 + extra
-
-    footer(canvas, brand, footer_y, rgb(col["navy"], 255))
-    return canvas.convert("RGB")
-
-
 def tpl_skyline(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
     """Tall premium poster (1080×1350): night photo, UAE flag, big headline, benefit text."""
     col = brand.colors
@@ -623,63 +566,6 @@ def tpl_split(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
             ImageDraw.Draw(seps).line((x, top + row_h * (i + 1), x + max_w, top + row_h * (i + 1)),
                                       fill=(255, 255, 255, 40), width=2)
     canvas.alpha_composite(seps)
-    footer(canvas, brand, footer_y, rgb(col["navy"], 255), icon_color=rgb(col["accent_yellow"], 255))
-    return canvas.convert("RGB")
-
-
-def tpl_circle(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
-    """Bright blue-purple gradient, the photo in a big circle with orbit rings, benefits as rounded tags."""
-    col = brand.colors
-    footer_y = 985
-    canvas = gradient((SIZE, SIZE), [col["navy"], col["brand_blue"], col["brand_purple"]], 35).convert("RGBA")
-    cx, cy, r = 746, 652, 258
-    soft_glow(canvas, (cx - r - 40, cy - r - 40, cx + r + 40, cy + r + 40), col["brand_cyan"], 110, 70)
-    dot_grid(canvas, 868, 74, 7, 3, 24, 3, (255, 255, 255, 90))
-
-    rings = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    d = ImageDraw.Draw(rings)
-    r1, r2 = r + 22, r + 56
-    d.ellipse((cx - r1, cy - r1, cx + r1, cy + r1), outline=(255, 255, 255, 170), width=3)
-    d.ellipse((cx - r2, cy - r2, cx + r2, cy + r2), outline=rgb(col["brand_cyan"], 150), width=2)
-    d.arc((cx - r2, cy - r2, cx + r2, cy + r2), 285, 330, fill=rgb(col["accent_yellow"], 255), width=7)
-    for angle, rad, size, fill in ((212, r2, 9, rgb(col["accent_yellow"], 255)), (28, r1, 7, WHITE),
-                                   (118, r2, 6, (255, 255, 255, 200))):
-        px, py = cx + rad * math.cos(math.radians(angle)), cy + rad * math.sin(math.radians(angle))
-        d.ellipse((px - size, py - size, px + size, py + size), fill=fill)
-    canvas.alpha_composite(rings)
-    disc = cover(photo, 2 * r, 2 * r, (0.5, 0.5)).convert("RGBA")
-    disc.putalpha(circle_mask(2 * r))
-    canvas.alpha_composite(disc, (cx - r, cy - r))
-
-    x = 60
-    paste_logo(canvas, brand.logo_white, (x, 52, x + 300, 124))
-    y = text_stack(canvas, x, 170, 345, [
-        {"text": content["headline_top"], "weight": 800, "max_w": 900, "size": 50, "min": 30, "lines": 2,
-         "fill": WHITE, "shadow": 60, "line_gap": -4},
-        {"text": content["headline_highlight"], "weight": 900, "max_w": 900, "size": 84, "min": 40, "lines": 1,
-         "fill": rgb(col["accent_yellow"], 255), "shadow": 60, "dx": -2},
-    ])
-    text_stack(canvas, x, y + 22, 640, [
-        {"text": content.get("subheadline"), "weight": 600, "max_w": 380, "size": 28, "min": 20, "lines": 4,
-         "fill": (228, 234, 255, 255), "shadow": 50, "line_gap": 4, "upper": False},
-    ])
-
-    items = [b for b in content.get("benefits") or [] if b][:3]
-    tag_h, gap = 64, 18
-    ft = fit_one_line(items, 700, 330, 26, 18)
-    ty = footer_y - 40 - len(items) * tag_h - (len(items) - 1) * gap
-    tags = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    td = ImageDraw.Draw(tags)
-    for i, label in enumerate(items):
-        y0 = ty + i * (tag_h + gap)
-        w = 22 + 38 + 14 + text_width(ft, label) + 26
-        td.rounded_rectangle((x, y0, x + w, y0 + tag_h), tag_h // 2, fill=(11, 15, 46, 120),
-                             outline=(255, 255, 255, 120), width=2)
-    canvas.alpha_composite(tags)
-    for i, label in enumerate(items):
-        mid = ty + i * (tag_h + gap) + tag_h / 2
-        badge(canvas, x + 22 + 19, mid, 38, brand, fill=col["accent_yellow"], fg=rgb(col["navy"], 255))
-        ImageDraw.Draw(canvas).text((x + 22 + 38 + 14, mid), label, font=ft, fill=WHITE, anchor="lm")
     footer(canvas, brand, footer_y, rgb(col["navy"], 255), icon_color=rgb(col["accent_yellow"], 255))
     return canvas.convert("RGB")
 
@@ -786,8 +672,8 @@ def tpl_frame(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
     return canvas.convert("RGB")
 
 
-RENDERERS = {"wave": tpl_wave, "spotlight": tpl_spotlight, "checklist": tpl_checklist, "skyline": tpl_skyline,
-             "split": tpl_split, "circle": tpl_circle, "cards": tpl_cards, "frame": tpl_frame}
+RENDERERS = {"wave": tpl_wave, "spotlight": tpl_spotlight, "skyline": tpl_skyline,
+             "split": tpl_split, "cards": tpl_cards, "frame": tpl_frame}
 
 
 def thumbnail(jpeg_bytes: bytes, width: int = 480) -> bytes:

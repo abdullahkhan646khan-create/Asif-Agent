@@ -1,7 +1,7 @@
-"""Gemini image generation through browser cookies, with two accounts (A then B).
+"""Gemini image generation through browser cookies, with three accounts (A, then B, then C).
 
-When an account's cookie stops working it is marked dead, the other account is used, and an
-alert email explains how to put a fresh cookie in .env (or Render's Environment tab).
+When an account's cookie stops working it is marked dead, the next account is used, and an
+alert email (to ALERT_EMAIL_TO) explains how to put a fresh cookie in .env (or Render's Environment tab).
 """
 
 import asyncio
@@ -26,7 +26,7 @@ from . import emailer  # noqa: E402
 from .store import get_store  # noqa: E402
 
 log = logging.getLogger("gemini")
-SLOTS = ("A", "B")
+SLOTS = ("A", "B", "C")
 
 
 class ImageGenError(RuntimeError):
@@ -89,7 +89,8 @@ class GeminiPool:
             st["last_ok"] = _now()
         await store.set_setting(f"gemini_status_{slot}", st)
         if state == "dead" and prev.get("state") != "dead":
-            await emailer.alert_cookie_dead(slot, error or "")
+            others = [f"{s}: {(await self.status(s))['state']}" for s in SLOTS if s != slot]
+            await emailer.alert_cookie_dead(slot, error or "", others)
 
     async def _persist_rotated(self, slot: str, client: GeminiClient):
         """Gemini refreshes __Secure-1PSIDTS over time; save the newest value so a restart keeps working."""
@@ -164,7 +165,7 @@ class GeminiPool:
         return data
 
     async def generate(self, prompt: str, only_slot: str | None = None) -> tuple[bytes, str]:
-        """Returns (image bytes, slot used). Tries account A, then B (or only `only_slot`)."""
+        """Returns (image bytes, slot used). Tries account A, then B, then C (or only `only_slot`)."""
         errors = []
         async with self.lock:
             for slot in ([only_slot] if only_slot else SLOTS):
@@ -194,7 +195,7 @@ class GeminiPool:
         raise ImageGenError("All Gemini accounts failed. " + " | ".join(errors))
 
     async def health_loop(self):
-        """Test both cookies shortly after start and then every few hours. In between, save the
+        """Test every cookie shortly after start and then every few hours. In between, save the
         cookie values Gemini refreshes in the background, so a Render restart doesn't lose them."""
         every = max(get_settings().gemini_health_check_hours, 0.5) * 3600
         next_check = asyncio.get_running_loop().time() + 30

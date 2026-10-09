@@ -222,13 +222,14 @@ async def send_alert(key: str, subject: str, heading: str, lines: list[str], thr
         log.exception("Could not send alert email %s", key)
 
 
-async def alert_cookie_dead(slot: str, error: str):
+async def alert_cookie_dead(slot: str, error: str, others: list[str] | None = None):
     await send_alert(
         f"cookie_{slot}", f"⚠️ Gemini cookie {slot} stopped working",
         f"Gemini account {slot} needs a fresh cookie",
         [
             f"Reason: {error}",
-            "Posts keep working on the other account if it is still OK.",
+            "The other accounts now: " + (", ".join(others) if others else "none set")
+            + " (ok = working; posts keep using the next working account: A, then B, then C).",
             "To fix: in FIREFOX open a private window → log in to that Google account → open gemini.google.com.",
             "Press F12 → Storage → Cookies → https://gemini.google.com → copy __Secure-1PSID and __Secure-1PSIDTS.",
             f"Put them in GEMINI_{slot}_1PSID and GEMINI_{slot}_1PSIDTS: in the .env file on your computer, or on Render "

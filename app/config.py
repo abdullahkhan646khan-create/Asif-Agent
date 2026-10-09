@@ -27,11 +27,13 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     openrouter_models: str = "openrouter/free,google/gemma-4-31b-it:free"
 
-    # Gemini (browser cookies). Slot A is tried first, then slot B.
+    # Gemini (browser cookies). Account A is tried first, then B, then C.
     gemini_a_1psid: str = ""
     gemini_a_1psidts: str = ""
     gemini_b_1psid: str = ""
     gemini_b_1psidts: str = ""
+    gemini_c_1psid: str = ""
+    gemini_c_1psidts: str = ""
     gemini_model: str = ""  # empty = account default
     gemini_proxy: str = ""  # optional, e.g. http://user:pass@host:port if Google blocks the server's address
     gemini_health_check_hours: float = 6

@@ -130,7 +130,6 @@
         <dt>Angle</dt><dd>{{ b.angle }}</dd>
         <dt>On the image</dt><dd>{{ b.headline_top }} <b>{{ b.headline_highlight }}</b>{% if b.subheadline %} · {{ b.subheadline }}{% endif %}{% if b.body %} · {{ b.body }}{% endif %}</dd>
         {% if b.benefits %}<dt>Benefits</dt><dd>{{ b.benefits|join(" · ") }}</dd>{% endif %}
-        {% if b.bullets and b.template == "checklist" %}<dt>Points</dt><dd>{{ b.bullets|join(" · ") }}</dd>{% endif %}
         <dt>Image prompt</dt><dd class="small">{{ b.image_prompt }}</dd>
         {% if b._plan %}<dt>Variety plan</dt><dd class="small">{{ b._plan.post_type|replace("_", " ") }} · for {{ b._plan.industry }} · {{ b._plan.person }} · {{ b._plan.setting }} · {{ b._plan.shot }} · {{ b._plan.light }} · caption: {{ b._plan.caption_style }}</dd>{% endif %}
         {% if b._variety_warning or c._variety_warning %}<dt>Variety</dt><dd class="small" style="color:var(--amber)">Could not fully avoid: {{ ((b._variety_warning or []) + (c._variety_warning or []))|join("; ") }}</dd>{% endif %}

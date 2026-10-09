@@ -16,10 +16,6 @@ LAYOUTS = {
                  "full background with a dark fade at the top for the headline, 3 benefits at the bottom. Photo "
                  "composition: dramatic, the top third is calm and dark (night sky, ceiling or dark space), main "
                  "subject in the lower middle.",
-    "checklist": "Benefit lists, reasons to choose, features or tips with 3-4 short points. Text on a light panel on "
-                 "the left, photo in a tall panel on the right. Photo composition: the whole subject, including any "
-                 "device or object the person uses, fits inside the central vertical third of the image (a tall "
-                 "narrow strip); the left and right thirds are only simple background.",
     "skyline": "Premium tall poster like a magazine ad: Dubai at night under a starry sky with a UAE flag, a big "
                "headline, a short benefit paragraph and 3 benefits. Best for AI and smart-technology posts, "
                "big-picture vision messages, brand awareness and UAE occasions. Photo composition: Dubai skyline at "
@@ -31,10 +27,6 @@ LAYOUTS = {
              "a diagonal edge. Good for infrastructure, cabling, networks, security and why-choose-us posts. Photo "
              "composition: the main subject (person or equipment) is in the central vertical third of the image and "
              "fills it from top to bottom; the left and right thirds are only simple background.",
-    "circle": "Modern tech look: a bright blue-purple gradient, the photo inside a big circle with orbit rings, the "
-              "headline at the top and the 3 benefits as rounded tags. Best for AI, software, apps, chatbots, cloud "
-              "and automation. Photo composition: the main subject is centred in the middle of the image with calm "
-              "space all around it (the photo is cut into a circle); nothing important near the edges or corners.",
     "cards": "Tall post: the photo on top, 3 benefit cards with check icons across its lower edge, the headline and "
              "subheadline centred below on a light background. Good for benefits, features and service promotion. "
              "Photo composition: the main subject is in the middle of the image with clear space above the head; "
@@ -58,11 +50,11 @@ def unsupported_claims(texts) -> list[str]:
     return list(dict.fromkeys(found))
 
 
-LIMITS = {"headline_top": 32, "headline_highlight": 18, "subheadline": 80, "body": 190, "benefit": 20, "bullet": 38}
+LIMITS = {"headline_top": 32, "headline_highlight": 18, "subheadline": 80, "body": 190, "benefit": 20}
 # the AI is asked for a little less than the real limit, so it rarely goes over and nothing has to be cut
-AIM = {**LIMITS, "headline_top": 30, "subheadline": 70, "body": 170, "bullet": 34}
-NEEDS_BENEFITS = ("wave", "spotlight", "skyline", "split", "circle", "cards", "frame")
-NEEDS_SUBHEADLINE = ("wave", "spotlight", "split", "circle", "cards", "frame")
+AIM = {**LIMITS, "headline_top": 30, "subheadline": 70, "body": 170}
+NEEDS_BENEFITS = ("wave", "spotlight", "skyline", "split", "cards", "frame")
+NEEDS_SUBHEADLINE = ("wave", "spotlight", "split", "cards", "frame")
 
 
 # ---------- step 1: creative director ----------
@@ -93,9 +85,8 @@ Every post shows the customer's problem or goal, how {brand.name} solves it, and
 - subheadline: how {brand.name} delivers it and for whom, max {AIM['subheadline']} characters.
 - benefits: exactly 3 concrete benefits of 2-3 words each, max {AIM['benefit']} characters each
   (e.g. "24/7 monitoring", "Remote viewing", "Lower costs"). Never vague words like "Quality" or "Best service".
-  Every benefit, bullet and headline must be natural, grammatical English ("Replies in seconds", never
+  Every benefit and headline must be natural, grammatical English ("Replies in seconds", never
   "Seconds replies").
-- bullets: only for the checklist layout, 3-4 points of max {AIM['bullet']} characters; otherwise [].
 - body: only for the skyline layout, 1-2 sentences of max {AIM['body']} characters that explain the solution
   and its benefits; otherwise "".
 - No calls to action on the image ("Book a demo", "Call now" and similar belong in the captions only).
@@ -112,7 +103,7 @@ Reply with ONLY this JSON object:
   "angle": "<one sentence: the customer problem, our solution and the main benefit>",
   "template": "{' | '.join(TEMPLATES)}",
   "headline_top": "...", "headline_highlight": "...", "subheadline": "...", "body": "...",
-  "benefits": ["...", "...", "..."], "bullets": [], "image_prompt": "..."}}"""
+  "benefits": ["...", "...", "..."], "image_prompt": "..."}}"""
 
 
 def _director_user(idea: str, plan: dict, history: list[dict], feedback: dict | None) -> str:
@@ -169,19 +160,13 @@ def _check_brief(brand: Brand):
         for b in benefits:
             if len(str(b)) > LIMITS["benefit"]:
                 p.append(f"benefit '{b}' is too long; max {AIM['benefit']} characters")
-        bullets = _as_list(d.get("bullets"))
-        if t == "checklist" and not 3 <= len(bullets) <= 4:
-            p.append("checklist layout needs 3-4 bullets")
-        for b in bullets:
-            if len(str(b)) > LIMITS["bullet"]:
-                p.append(f"bullet '{b}' is too long; rewrite it shorter (max {AIM['bullet']} characters)")
         if len(str(d.get("image_prompt") or "").split()) < 30:
             p.append("image_prompt is too short; write 60-120 words")
         svc = d.get("service")
         if svc and svc != "General" and not brand.service(svc):
             p.append(f"service '{svc}' is not in the list; use an exact name or General")
         claims = unsupported_claims([d.get(k) for k in ("headline_top", "headline_highlight", "subheadline", "body")]
-                                    + _as_list(d.get("benefits")) + _as_list(d.get("bullets")))
+                                    + _as_list(d.get("benefits")))
         if claims:
             p.append(f"remove unsupported claims {claims}: no guarantees, awards or numbers that are not in the brand kit")
         return p
@@ -240,10 +225,7 @@ def _clean_brief(d: dict, brand: Brand, template_pref: str | None) -> dict:
         benefits = (benefits + extra)[:3]
     d["benefits"] = benefits
 
-    bullets = [_trim(b, LIMITS["bullet"]) for b in _as_list(d.get("bullets"))][:4]
-    if d["template"] == "checklist" and len(bullets) < 3:
-        bullets = (bullets + [b for b in pool if b not in bullets])[:4]
-    d["bullets"] = bullets
+    d.pop("bullets", None)  # only the removed checklist layout used bullet points
     if d["template"] == "skyline" and not d.get("body"):
         d["body"] = d.get("subheadline", "")
     return d

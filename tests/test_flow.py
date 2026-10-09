@@ -728,7 +728,7 @@ def test_every_layout_renders_at_its_size():
                "subheadline": "End-to-end managed networks, firewalls and Wi-Fi for growing companies across the UAE.",
                "body": "Smart, scalable networks for UAE businesses.", "benefits": ["Instant notifications",
                "Lower running costs", "Certified engineers"], "bullets": ["Live check-in", "Instant reports", "One dashboard"]}
-    assert len(TEMPLATES) >= 8
+    assert set(TEMPLATES) == {"wave", "spotlight", "skyline", "split", "cards", "frame"}  # circle + checklist removed
     for t in TEMPLATES:
         img = Image.open(io.BytesIO(compose(t, buf.getvalue(), {"template": t, **content}, load_brand())))
         assert img.size == ((1080, 1350) if t in ("skyline", "cards") else (1080, 1080)), t
@@ -768,3 +768,43 @@ def test_text_is_never_cut_mid_thought():
     for text, expected in cases.items():
         assert _trim(text, 80) == expected, _trim(text, 80)
     assert _trim("Short and fine", 80) == "Short and fine"
+
+
+def test_three_cookies_are_tried_in_order_and_every_dead_one_is_emailed(monkeypatch):
+    """A fails -> B is tried; B fails -> C makes the picture. An alert goes out for A and for B."""
+    from app import imagegen
+    from app.store import get_store
+    from gemini_webapi.exceptions import AuthError
+
+    tried, alerts = [], []
+
+    async def go():
+        pool = imagegen.GeminiPool()
+
+        async def fake_cookies(slot):
+            return f"psid-{slot}", "ts"
+
+        async def fake_generate(slot, prompt):
+            tried.append(slot)
+            if slot in ("A", "B"):
+                raise AuthError(f"cookie {slot} expired")
+            return b"picture"
+
+        async def fake_alert(slot, error, others=None):
+            alerts.append((slot, others))
+        monkeypatch.setattr(pool, "cookies", fake_cookies)
+        monkeypatch.setattr(pool, "_generate_with", fake_generate)
+        monkeypatch.setattr(imagegen.emailer, "alert_cookie_dead", fake_alert)
+        store = get_store()
+        for slot in imagegen.SLOTS:
+            await store.set_setting(f"gemini_status_{slot}", {"state": "ok"})
+        result = await pool.generate("a photo")
+        for slot in imagegen.SLOTS:
+            await store.set_setting(f"gemini_status_{slot}", None)
+        return result
+
+    assert imagegen.SLOTS == ("A", "B", "C")
+    assert run(go()) == (b"picture", "C")
+    assert tried == ["A", "B", "C"]
+    assert [a[0] for a in alerts] == ["A", "B"]
+    assert alerts[1][1] == ["A: dead", "C: ok"]  # the email says which accounts still work

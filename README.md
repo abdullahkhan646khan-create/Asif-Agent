@@ -93,7 +93,7 @@ Buffer needs a **public** image link, though, so to really publish you need Supa
 **Gemini cookies** (two extra Google accounts, A and B). **Use Firefox**: Chrome, Edge and Brave now tie these cookies to the computer, so on a server they die within 1–2 hours.
 1. In Firefox, open a private window (Cmd/Ctrl + Shift + P), log in to the extra account and open https://gemini.google.com.
 2. Press F12 → **Storage** → **Cookies** → `https://gemini.google.com`.
-3. Copy `__Secure-1PSID` and `__Secure-1PSIDTS` into `GEMINI_A_...` (then repeat with the second account for `GEMINI_B_...`).
+3. Copy `__Secure-1PSID` and `__Secure-1PSIDTS` into `GEMINI_A_...` (then repeat with the second and third accounts for `GEMINI_B_...` and `GEMINI_C_...`; they are used in that order).
 4. Close the window **without logging out**.
 5. Use each cookie in **one place only**. Take fresh cookies for Render instead of reusing the ones from your computer.
 

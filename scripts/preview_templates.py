@@ -18,12 +18,6 @@ content = {
     "headline_top": "Structured",
     "headline_highlight": "Cabling",
     "subheadline": "For offices, data centers and commercial buildings",
-    "bullets": [
-        "Future-proof Cat6A & fiber design",
-        "TIA/EIA and ISO/IEC standards",
-        "Clean, labeled, documented racks",
-        "Site survey to final testing",
-    ],
     "benefits": ["Future-proof design", "Labeled racks", "Tested to standards"],
     "body": "Clean, standards-based copper and fiber cabling that keeps your offices and data centers fast, "
             "organized and ready to grow.",

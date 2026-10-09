@@ -54,9 +54,9 @@ SAMPLES = {
                         "lifestyle photography.",
     },
     "backup-recovery": {
-        "template": "checklist", "headline_top": "Never lose your", "headline_highlight": "Business Data",
-        "bullets": ["Automatic daily backups", "Fast recovery after any failure", "Protection from ransomware",
-                    "Cloud & on-site copies"],
+        "template": "cards", "headline_top": "Never lose your", "headline_highlight": "Business Data",
+        "subheadline": "Automatic backups and fast recovery that keep your business running",
+        "benefits": ["Daily backups", "Fast recovery", "Ransomware defense"],
         "image_prompt": "An IT engineer in a smart shirt standing next to a modern storage server rack with glowing "
                         "blue drive lights, holding a tablet and checking it calmly. Subject centered, clean bright "
                         "server room, cool blue tones, shallow depth of field.",
@@ -90,9 +90,9 @@ SAMPLES = {
         "image_prompt": "Dome and bullet security cameras on a modern Dubai building facade at dusk.",
     },
     "access-control": {
-        "template": "checklist", "headline_top": "Secure every", "headline_highlight": "Entrance",
-        "bullets": ["Card, PIN & biometric entry", "Control all doors centrally", "Full audit trail of entries",
-                    "Installed by certified engineers"],
+        "template": "frame", "headline_top": "Secure every", "headline_highlight": "Entrance",
+        "subheadline": "Card, PIN and biometric entry with central control of every door",
+        "benefits": ["Central control", "Audit trails", "Biometric entry"],
         "image_prompt": "A professional tapping an access card on a sleek reader next to a glass office door.",
     },
     "whatsapp-chatbot": {
@@ -108,9 +108,9 @@ SAMPLES = {
         "image_prompt": "A long clean data center aisle with blue LED lights.",
     },
     "time-attendance": {
-        "template": "checklist", "headline_top": "Smart", "headline_highlight": "Attendance",
-        "bullets": ["Live check-in & check-out", "Instant attendance reports", "One dashboard for all branches",
-                    "Mobile & fingerprint check-in"],
+        "template": "cards", "headline_top": "Smart", "headline_highlight": "Attendance",
+        "subheadline": "Live check-in, instant reports and one dashboard for all branches",
+        "benefits": ["Live check-in", "Instant reports", "Mobile check-in"],
         "image_prompt": "An employee using a fingerprint attendance terminal at an office entrance.",
     },
     "web-development": {
