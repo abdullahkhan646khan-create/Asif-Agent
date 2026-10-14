@@ -1,13 +1,36 @@
 {% extends "base.html" %}
 {% block title %}Log in{% endblock %}
+{% block body_class %}auth{% endblock %}
 {% block content %}
-<div class="center">
-  <form class="card narrow stack" method="post" action="/login">
-    <img src="/brand-assets/logo/logo-main-original.png" alt="{{ brand.name }}" style="height:48px;display:block;margin:0 auto 6px">
-    <h2 style="text-align:center">Post Agent</h2>
-    {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
-    <div><label class="lbl" for="pw">Password</label><input id="pw" type="password" name="password" autofocus required></div>
-    <button class="btn big" style="width:100%">Log in</button>
-  </form>
+<div class="auth-wrap">
+  <section class="auth-brand">
+    <img src="/brand-assets/logo/logo-white-original.png" alt="{{ brand.name }}" class="auth-logo">
+    <div class="auth-copy">
+      <span class="eyebrow">{{ icon("sparkle", 15) }} AI social media agent</span>
+      <h1>Branded posts, written, designed and published <em>for you</em>.</h1>
+      <ul class="auth-points">
+        <li>{{ icon("check", 16) }} Fresh topics that never repeat</li>
+        <li>{{ icon("check", 16) }} Exact logo, contacts and brand designs</li>
+        <li>{{ icon("check", 16) }} One-tap approval from your email</li>
+        <li>{{ icon("check", 16) }} Daily schedule in Dubai time</li>
+      </ul>
+    </div>
+    <p class="auth-foot">{{ brand.profile.company.taglines[0] if brand.profile.company.taglines else brand.name }}</p>
+  </section>
+  <section class="auth-form">
+    <form class="card auth-card stack" method="post" action="/login">
+      <img src="/brand-assets/logo/logo-main-original.png" alt="{{ brand.name }}" class="auth-card-logo">
+      <div>
+        <h2>Welcome back</h2>
+        <p class="muted" style="margin:0">Log in to the {{ brand.name }} Post Agent.</p>
+      </div>
+      {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+      <div>
+        <label class="lbl" for="pw">Password</label>
+        <div class="input-icon">{{ icon("lock", 17) }}<input id="pw" type="password" name="password" autofocus required placeholder="Your dashboard password"></div>
+      </div>
+      <button class="btn big" style="width:100%">Log in</button>
+    </form>
+  </section>
 </div>
 {% endblock %}

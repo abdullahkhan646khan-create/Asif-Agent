@@ -1,8 +1,15 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Posts{% endblock %}
 {% block content %}
 <section class="card composer">
-  <h1>What should we <em>post</em> today?</h1>
+  <div class="composer-head">
+    <div>
+      <span class="eyebrow">{{ icon("sparkle", 15) }} New post</span>
+      <h1>What should we <em>post</em> today?</h1>
+      <p class="composer-sub">Type an idea, or leave it empty: the agent writes it, designs it and emails it to you for approval.</p>
+    </div>
+  </div>
   {% set layout_names = {"wave": "Blue wave", "spotlight": "Dark photo", "skyline": "Dubai night",
                          "split": "Diagonal split", "cards": "Benefit cards", "frame": "White card"} %}
   <form id="new-post">
@@ -34,26 +41,31 @@
         <input type="datetime-local" name="publish_at" id="publish-at" min="{{ min_time }}">
       </label>
     </div>
+    <div class="field-label">Design</div>
     <div class="chips" role="radiogroup" aria-label="Layout">
       <label><input type="radio" name="template" value="" checked><span>Auto layout</span></label>
       {% for t in layouts %}<label><input type="radio" name="template" value="{{ t }}"><span>{{ layout_names.get(t, t) }}</span></label>{% endfor %}
     </div>
     <div class="foot">
-      <span class="hint">Everything on Auto = a fresh topic that hasn't been posted before. About 1–2 minutes, then an email to approve.
-        Daily automatic posts: <a href="/schedule" style="color:#fff;text-decoration:underline">Schedule</a>.</span>
-      <button class="btn yellow big" id="go">Create post</button>
+      <span class="hint">{{ icon("info", 15) }}<span>Everything on Auto = a fresh topic that hasn't been posted before. About 1–2 minutes, then an email to approve.
+        Daily automatic posts: <a href="/schedule">Schedule</a>.</span></span>
+      <button class="btn yellow big" id="go">{{ icon("sparkle", 17) }} Create post</button>
     </div>
   </form>
 </section>
 
-<section style="margin-top:30px">
-  <div class="row" style="justify-content:space-between">
-    <h2 style="margin:0">Posts</h2>
-    <span class="muted small">Dubai time: {{ now_dubai }}</span>
+<div class="stats" id="stats"></div>
+
+<section class="list-section">
+  <div class="section-head">
+    <div>
+      <h2>Your posts</h2>
+      <p class="muted small" style="margin:0">Newest first · Dubai time {{ now_dubai }}</p>
+    </div>
+    <div class="filters" id="filters"></div>
   </div>
-  <div class="filters" id="filters"></div>
   <div class="posts" id="posts"></div>
-  <div class="empty" id="empty" hidden>No posts here yet.</div>
+  <div class="empty" id="empty" hidden>{{ icon("image", 34) }}<b>No posts here yet</b><span>Create one above, or switch on the daily schedule.</span></div>
   <div style="text-align:center;margin-top:18px"><button class="btn ghost" id="more" hidden>Show older posts</button></div>
 </section>
 {% endblock %}
@@ -66,6 +78,7 @@ let limit = 60;
 const FILTER_NAMES = { all: "All", approval: "Needs approval", scheduled: "Scheduled", working: "Being made",
                        published: "Published", problems: "Problems" };
 
+const CLOCK = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
 function card(p) {
   const c = p.captions || {};
   const title = c.title || p.idea;
@@ -74,12 +87,28 @@ function card(p) {
     ? `<img src="${esc(src)}" alt="" loading="lazy" decoding="async">`
     : `<div class="wait">${WORKING.includes(p.status) ? '<div class="spinner"></div>' : ''}${esc(p.stage_note || '')}</div>`;
   const when = p.scheduled_for && !["published", "cancelled"].includes(p.status)
-    ? `<div class="when">🕘 ${esc(dubai(p.scheduled_for))}</div>` : "";
+    ? `<span class="when">${CLOCK} ${esc(dubai(p.scheduled_for))}</span>` : "";
   return `<a class="post" href="/posts/${p.id}">
     <div class="thumb">${img}</div>
-    <div class="meta">${badge(p.status)}${p.attempt > 1 ? ` <span class="muted small">v${p.attempt}</span>` : ''}
-      <div class="title">${esc(title)}</div>${when}
-      <div class="muted small">${ago(p.created_at)}</div></div></a>`;
+    <div class="meta">
+      <div class="meta-top">${badge(p.status)}<span class="ago">${ago(p.created_at)}</span></div>
+      <div class="title">${esc(title)}</div>
+      ${when || p.attempt > 1 ? `<div class="info">${when}${p.attempt > 1 ? `<span class="ver">v${p.attempt}</span>` : ''}</div>` : ''}
+    </div></a>`;
+}
+
+const STATS = [
+  ["approval", "Needs approval", "wait"], ["scheduled", "Scheduled", "sched"], ["working", "Being made", "work"],
+  ["published", "Published", "ok"], ["problems", "Problems", "bad"],
+];
+function renderStats() {
+  const box = document.getElementById("stats");
+  if (!box) return;
+  box.innerHTML = STATS.map(([k, label, cls]) => {
+    const n = posts.filter(FILTERS[k]).length;
+    return `<button type="button" class="stat ${cls}${k === filter ? " on" : ""}" data-f="${k}">
+      <span class="stat-n">${n}</span><span class="stat-l">${label}</span></button>`;
+  }).join("");
 }
 
 function render() {
@@ -91,6 +120,7 @@ function render() {
   document.getElementById("posts").innerHTML = shown.map(card).join("");
   document.getElementById("empty").hidden = shown.length > 0;
   document.getElementById("more").hidden = posts.length < limit;
+  renderStats();
 }
 
 document.getElementById("more").addEventListener("click", async () => {
@@ -101,6 +131,10 @@ document.getElementById("more").addEventListener("click", async () => {
 document.getElementById("filters").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-f]");
   if (b) { filter = b.dataset.f; render(); }
+});
+document.getElementById("stats").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-f]");
+  if (b) { filter = filter === b.dataset.f ? "all" : b.dataset.f; render(); }
 });
 
 document.getElementById("when-mode").addEventListener("change", (e) => {

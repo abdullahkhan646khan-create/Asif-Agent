@@ -1,8 +1,9 @@
-<!doctype html>
+{% from "_icons.html" import icon %}<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0B1230">
   <title>{% block title %}Post Agent{% endblock %} · {{ brand.name }}</title>
   <link rel="icon" href="/brand-assets/logo/logo-icon-original.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -10,19 +11,27 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Montserrat:wght@700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/app.css">
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}">
 {% if request.session.get('auth') %}
 <header class="top">
-  <a class="top-brand" href="/"><img src="/brand-assets/logo/logo-main-original.png" alt="{{ brand.name }}"><span>Post Agent</span></a>
-  <nav>
-    <a href="/" class="{{ 'on' if request.url.path == '/' }}">Posts</a>
-    <a href="/schedule" class="{{ 'on' if request.url.path == '/schedule' }}">Schedule</a>
-    <a href="/logout" class="muted">Log out</a>
-  </nav>
+  <div class="top-in">
+    <a class="top-brand" href="/">
+      <img src="/brand-assets/logo/logo-white-original.png" alt="{{ brand.name }}">
+      <span>Post Agent</span>
+    </a>
+    <nav>
+      <a href="/" class="{{ 'on' if request.url.path == '/' }}">{{ icon("grid", 17) }}<b>Posts</b></a>
+      <a href="/schedule" class="{{ 'on' if request.url.path == '/schedule' }}">{{ icon("calendar", 17) }}<b>Schedule</b></a>
+    </nav>
+    <div class="top-right">
+      {% if now_dubai %}<span class="top-time" title="Dubai time">{{ icon("clock", 15) }}{{ now_dubai }}</span>{% endif %}
+      <a href="/logout" class="top-out" title="Log out">{{ icon("logout", 17) }}<b>Log out</b></a>
+    </div>
+  </div>
 </header>
 {% endif %}
 {% if settings.dry_run_publish and request.session.get('auth') %}
-<div class="banner">Test mode is on (DRY_RUN_PUBLISH=true): approving a post does everything except actually posting.</div>
+<div class="banner">{{ icon("info", 15) }} Test mode is on (DRY_RUN_PUBLISH=true): approving a post does everything except actually posting.</div>
 {% endif %}
 <main class="wrap">{% block content %}{% endblock %}</main>
 <div id="toast" class="toast" hidden></div>

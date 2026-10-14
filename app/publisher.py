@@ -71,7 +71,7 @@ _label_cache: dict = {"at": 0.0, "text": None}
 
 
 async def target_label() -> str:
-    """Where an approved post goes, in words, e.g. 'Facebook (Tesst)'. Cached for 10 minutes."""
+    """Where an approved post goes, in words, e.g. 'Facebook (Amanasoft It Solutions)'. Cached for 10 minutes."""
     if _label_cache["text"] and time.monotonic() - _label_cache["at"] < 600:
         return _label_cache["text"]
     try:

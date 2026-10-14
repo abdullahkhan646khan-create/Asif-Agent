@@ -380,6 +380,14 @@ async def _review_post(post_id: str, action: str, t: str) -> dict:
     return post
 
 
+def invalid_link_page(request: Request) -> HTMLResponse:
+    """An old or wrong email link: same refusal (403, nothing happens), shown as a readable page."""
+    resp = page(request, "message.html", title="This link is not valid anymore",
+                text="A newer version of this post may have been sent. Open the latest email, or the post on the dashboard.")
+    resp.status_code = 403
+    return resp
+
+
 # One-tap reasons offered under the Reject button in the email.
 QUICK_REASONS = {"image": "Different image", "text": "Too much text", "focus": "Wrong service focus",
                  "headline": "Headline not strong", "brand": "Colours not on brand"}
@@ -388,7 +396,10 @@ QUICK_REASONS = {"image": "Different image", "text": "Too much text", "focus": "
 @app.get("/review/{post_id}", response_class=HTMLResponse)
 async def review_page(request: Request, post_id: str, action: str, t: str, r: str = ""):
     """The email button. It opens a page that performs the action right away in the browser (one tap)."""
-    post = await _review_post(post_id, action, t)
+    try:
+        post = await _review_post(post_id, action, t)
+    except HTTPException:
+        return invalid_link_page(request)
     if post["status"] not in REVIEW_ALLOWED[action]:
         await pipeline.note(post_id, f"Email “{action}” link opened, but the post was already {post['status'].replace('_', ' ')}",
                             "email link")
@@ -407,7 +418,10 @@ async def review_page(request: Request, post_id: str, action: str, t: str, r: st
 @app.post("/review/{post_id}", response_class=HTMLResponse)
 async def review_submit(request: Request, post_id: str, action: str = Form(...), t: str = Form(...),
                         reason: str = Form("")):
-    post_before = await _review_post(post_id, action, t)
+    try:
+        post_before = await _review_post(post_id, action, t)
+    except HTTPException:
+        return invalid_link_page(request)
 
     async def already():
         now_post = await get_store().get_post(post_id) or post_before

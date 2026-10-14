@@ -1,28 +1,32 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Schedule{% endblock %}
 {% set prepare_names = {15: "15 minutes", 30: "30 minutes", 60: "1 hour", 120: "2 hours", 180: "3 hours", 360: "6 hours", 720: "12 hours"} %}
 {% block content %}
-<div class="row" style="justify-content:space-between;align-items:baseline">
-  <h1>Schedule</h1>
-  <span class="muted small">Dubai time now: {{ now_dubai }}</span>
+<div class="page-head">
+  <div>
+    <span class="eyebrow dark">{{ icon("calendar", 15) }} Daily posting</span>
+    <h1>Schedule</h1>
+    <p class="muted" style="margin:0">Set the times to post every day. At each time the agent picks a fresh topic, makes the post and publishes it.</p>
+  </div>
+  <span class="chip-time">{{ icon("clock", 15) }} Dubai time now: {{ now_dubai }}</span>
 </div>
-<p class="muted" style="margin-top:0">Set the times to post every day. At each time the agent picks a fresh topic, makes the post and publishes it.</p>
 
-<div class="grid2" style="margin-top:18px">
-  <section class="card stack" id="schedule-form">
-    <div>
+<div class="grid2 sched-grid">
+  <section class="card stack sched-form" id="schedule-form">
+    <div class="sched-switch">
       <label class="switch"><input type="checkbox" id="enabled" {{ "checked" if schedule.enabled }}> Automatic daily posting</label>
       <p class="muted small" style="margin:6px 0 0">Turning it off stops new posts. Posts that are already prepared stay until you cancel them.</p>
     </div>
 
     <div>
-      <label class="lbl">Posting times (Dubai)</label>
+      <label class="lbl">{{ icon("clock", 15) }} Posting times (Dubai)</label>
       <div class="sched-times" id="times"></div>
-      <button type="button" class="btn ghost" style="margin-top:10px" id="add-time">+ Add a time</button>
+      <button type="button" class="btn ghost" style="margin-top:12px" id="add-time">+ Add a time</button>
     </div>
 
     <div>
-      <label class="lbl">Days</label>
+      <label class="lbl">{{ icon("calendar", 15) }} Days</label>
       <div class="daychips">
         {% for name in day_names %}
         <label><input type="checkbox" name="day" value="{{ loop.index0 }}" {{ "checked" if loop.index0 in schedule.days }}><span>{{ name }}</span></label>
@@ -31,7 +35,7 @@
     </div>
 
     <div>
-      <label class="lbl">Approval</label>
+      <label class="lbl">{{ icon("shield", 15) }} Approval</label>
       <label class="choice"><input type="radio" name="approval" value="ask" {{ "checked" if schedule.approval == "ask" }}>
         <span><b>Ask me first</b> (recommended)<br><span class="muted small">Each post is made ahead of time and emailed to you. Approve it and it goes out exactly at its time.</span></span></label>
       <label class="choice"><input type="radio" name="approval" value="auto" {{ "checked" if schedule.approval == "auto" }}>
@@ -39,9 +43,9 @@
     </div>
 
     <div>
-      <label class="lbl" for="prepare">Make each post</label>
+      <label class="lbl" for="prepare">{{ icon("zap", 15) }} Make each post</label>
       <div class="row">
-        <select id="prepare" style="border:1px solid var(--line);border-radius:10px;padding:9px 11px;font:500 14px Inter">
+        <select id="prepare" class="select">
           {% for m in prepare_choices %}<option value="{{ m }}" {{ "selected" if m == schedule.prepare_minutes }}>{{ prepare_names[m] }}</option>{% endfor %}
         </select>
         <span class="muted small">before its posting time (time for you to review it)</span>
@@ -49,21 +53,21 @@
     </div>
 
     <div id="no-answer-box">
-      <label class="lbl">If I haven't approved a post by its time</label>
+      <label class="lbl">{{ icon("info", 15) }} If I haven't approved a post by its time</label>
       <label class="choice"><input type="radio" name="if_no_answer" value="wait" {{ "checked" if schedule.if_no_answer == "wait" }}>
         <span><b>Wait for me</b><br><span class="muted small">It is published right after I approve it, even if that is later.</span></span></label>
       <label class="choice"><input type="radio" name="if_no_answer" value="publish" {{ "checked" if schedule.if_no_answer == "publish" }}>
         <span><b>Publish it anyway</b> at its time</span></label>
     </div>
 
-    <div class="row">
-      <button class="btn big" id="save">Save schedule</button>
+    <div class="row sched-save">
+      <button class="btn big" id="save">{{ icon("check", 17) }} Save schedule</button>
       <span class="muted small" id="summary"></span>
     </div>
   </section>
 
   <section class="card daylist">
-    <h2>Today and the next days</h2>
+    <h2 class="card-title">{{ icon("list", 18) }} Today and the next days</h2>
     {% if not days %}
       <p class="muted">Nothing planned yet. Turn on automatic daily posting, or give a post a time on the Posts page.</p>
     {% endif %}

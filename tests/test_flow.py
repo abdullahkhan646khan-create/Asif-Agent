@@ -204,7 +204,9 @@ def test_reject_makes_new_version(client):
     assert post["attempt"] == 2 and len(post["history"]) == 1 and post["history"][0]["reason"] == "Darker look please"
     assert post["brief"]["template"] == "spotlight"
     assert sent[-1]["subject"].endswith("(version 2)")
-    assert client.get(old["approve"]).status_code == 403  # links from the old email stop working
+    stale = client.get(old["approve"])
+    assert stale.status_code == 403 and "not valid anymore" in stale.text  # links from the old email stop working
+    assert "<html" in stale.text  # shown as a readable page, not raw JSON
 
 
 def test_failure_alert_and_retry(client):
@@ -702,7 +704,7 @@ def test_heartbeat_visits_its_own_health_page(monkeypatch):
 
     real = httpx.AsyncClient
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
-    monkeypatch.setattr(main.settings, "public_base_url", "https://asif-agent.onrender.com")
+    monkeypatch.setattr(main.settings, "public_base_url", "https://example.onrender.com")
     monkeypatch.setattr(main.settings, "heartbeat_minutes", 0.001)  # ~0.06 s for the test
 
     async def go():
@@ -710,7 +712,7 @@ def test_heartbeat_visits_its_own_health_page(monkeypatch):
         await asyncio.sleep(0.3)
         task.cancel()
     run(go())
-    assert visits and all(v == "https://asif-agent.onrender.com/health?from=heartbeat" for v in visits)
+    assert visits and all(v == "https://example.onrender.com/health?from=heartbeat" for v in visits)
     assert main.HEARTBEAT["on"] and main.HEARTBEAT["last_ok"]  # shown on /health, so it can be checked from outside
 
     visits.clear()  # on your computer (http://localhost) it stays off

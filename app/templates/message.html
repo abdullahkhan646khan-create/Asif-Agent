@@ -2,8 +2,8 @@
 {% block title %}{{ title }}{% endblock %}
 {% block content %}
 <div class="center">
-  <div class="card narrow stack" style="max-width:520px;text-align:center">
-    <img src="/brand-assets/logo/logo-main-original.png" alt="{{ brand.name }}" style="height:40px;margin:0 auto">
+  <div class="card narrow stack notice-card">
+    <img src="/brand-assets/logo/logo-main-original.png" alt="{{ brand.name }}" class="notice-logo">
     <h1 style="font-size:22px">{{ title }}</h1>
     {% if text %}<p class="muted" style="margin:0">{{ text }}</p>{% endif %}
     {% if results %}

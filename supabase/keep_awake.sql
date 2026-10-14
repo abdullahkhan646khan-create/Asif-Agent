@@ -5,6 +5,7 @@
 -- if it ever falls asleep.
 --
 -- How to use: Supabase → SQL Editor → New query → paste this whole file → Run.
+-- First replace YOUR-APP below with your Render address (Render → your service → the URL at the top).
 -- Running it again is safe: it only updates the job.
 
 create extension if not exists pg_net with schema extensions;
@@ -13,7 +14,7 @@ create extension if not exists pg_cron with schema pg_catalog;
 select cron.schedule(
   'keep-render-awake',
   '*/5 * * * *',
-  $$ select net.http_get('https://asif-agent.onrender.com/health?from=supabase', timeout_milliseconds := 60000) $$
+  $$ select net.http_get('https://YOUR-APP.onrender.com/health?from=supabase', timeout_milliseconds := 60000) $$
 );
 
 -- Check that it runs (wait 5 minutes first):

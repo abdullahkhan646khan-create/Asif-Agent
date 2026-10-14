@@ -4,11 +4,11 @@
 <div class="center">
   {# One tap from the email: this page sends the action by itself as soon as it opens in the browser.
      It does nothing when only fetched (e.g. by an email virus scanner), because it needs the browser to run it. #}
-  <form id="go" method="post" action="/review/{{ post.id }}" class="card narrow stack" style="text-align:center">
+  <form id="go" method="post" action="/review/{{ post.id }}" class="card narrow stack notice-card">
     <input type="hidden" name="action" value="{{ action }}">
     <input type="hidden" name="t" value="{{ token }}">
     <input type="hidden" name="reason" value="{{ reason }}">
-    <img src="/brand-assets/logo/logo-main-original.png" alt="{{ brand.name }}" style="height:40px;margin:0 auto">
+    <img src="/brand-assets/logo/logo-main-original.png" alt="{{ brand.name }}" class="notice-logo">
     <div class="spinner"></div>
     <h2 id="msg">{{ label }}…</h2>
     <noscript><button class="btn big" style="width:100%">{{ label }}</button></noscript>
