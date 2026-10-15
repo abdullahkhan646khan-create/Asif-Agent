@@ -136,6 +136,17 @@ async def send(to: list[str], subject: str, html: str, text: str, inline: dict[s
 
 # ---------- the emails ----------
 
+# (label, caption key, character limit or None) in the order they are shown
+CAPTION_PLATFORMS = [("Facebook", "facebook", None), ("Instagram", "instagram", 2200), ("LinkedIn", "linkedin", 3000),
+                     ("X (Twitter)", "x", 280), ("Threads", "threads", 500)]
+
+
+def caption_blocks(captions: dict) -> list[tuple]:
+    """(label, key, length, limit) for every platform this post has a caption for."""
+    return [(label, key, len(captions[key]) if limit else None, limit)
+            for label, key, limit in CAPTION_PLATFORMS if captions.get(key)]
+
+
 async def send_review(post: dict, image_bytes: bytes):
     s = get_settings()
     brand = load_brand()
@@ -148,7 +159,7 @@ async def send_review(post: dict, image_bytes: bytes):
         "approve_url": review_link(post, "approve"), "reject_url": review_link(post, "reject"),
         "cancel_url": review_link(post, "cancel"),
         "dashboard_url": f"{s.base_url}/posts/{post['id']}",
-        "x_len": len(c.get("x", "")), "threads_len": len(c.get("threads", "")),
+        "platforms": caption_blocks(c),
         "when_label": fmt(when) if when else None, "auto": auto, "future": future,
         "targets": await publisher.target_label(),
     }
@@ -163,7 +174,7 @@ async def send_review(post: dict, image_bytes: bytes):
     lines.append(f"REJECT & MAKE A NEW VERSION: {ctx['reject_url']}")
     if when:
         lines.append(f"CANCEL (publish nothing): {ctx['cancel_url']}")
-    text = "\n".join(lines) + f"\n\nFACEBOOK:\n{c['facebook']}\n\nX:\n{c['x']}\n\nTHREADS:\n{c['threads']}\n"
+    text = "\n".join(lines) + "".join(f"\n\n{label.upper()}:\n{c[key]}" for label, key, _, _ in caption_blocks(c)) + "\n"
     version = f" (version {post['attempt']})" if post["attempt"] > 1 else ""
     if auto:
         subject = f"Auto-post {fmt(when)}: {c['title']}{version}"

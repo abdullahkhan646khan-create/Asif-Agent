@@ -16,7 +16,7 @@ os.environ.update({
     "DATA_DIR": tempfile.mkdtemp(prefix="post-agent-test-"), "SUPABASE_URL": "", "SUPABASE_SERVICE_KEY": "",
     "APP_SECRET": "test-secret", "DASHBOARD_PASSWORD": "pw", "PUBLIC_BASE_URL": "http://testserver",
     "REVIEW_EMAIL_TO": "owner@example.com", "GMAIL_SENDER": "bot@example.com", "BUFFER_API_KEY": "x",
-    "DRY_RUN_PUBLISH": "false", "PUBLISH_MODE": "shareNow",
+    "DRY_RUN_PUBLISH": "false", "PUBLISH_MODE": "shareNow", "POST_PLATFORMS": "facebook,instagram,linkedin,x,threads",
     "EMAIL_RELAY_URL": "https://script.google.com/macros/s/TEST/exec", "EMAIL_RELAY_SECRET": "s3",
     # never touch the real services that .env points to
     "EMAIL_MODE": "apps_script", "GMAIL_APP_PASSWORD": "", "BUFFER_CHANNEL_IDS": "", "GROQ_API_KEY": "",
@@ -66,6 +66,8 @@ async def fake_ask_json(system, user, check=None, temperature=0.7):
         data = {
             "title": words(rnd, 5).capitalize(),
             "facebook": words(rnd, 30).capitalize() + ". 📞 +971 55 940 8284 · 🌐 amanasoft.ae #Amanasoft #Dubai #UAE",
+            "instagram": words(rnd, 25).capitalize() + ".\n📞 +971 55 940 8284 · 🌐 amanasoft.ae\n#Amanasoft #Dubai #UAE #CCTV",
+            "linkedin": words(rnd, 40).capitalize() + ". 📞 +971 55 940 8284 · 🌐 amanasoft.ae #Amanasoft #UAE",
             "x": words(rnd, 10).capitalize() + " amanasoft.ae #Amanasoft",
             "threads": words(rnd, 20).capitalize() + " amanasoft.ae",
             "threads_topic": "Structured Cabling",
@@ -109,6 +111,7 @@ async def fake_gql(query, variables=None):
     if "channels" in query:
         return {"channels": [
             {"id": "fb1", "name": "Amanasoft", "service": "facebook", "isQueuePaused": False, "isDisconnected": False, "isLocked": False},
+            {"id": "ig1", "name": "amanasoft", "service": "instagram", "isQueuePaused": False, "isDisconnected": False, "isLocked": False},
             {"id": "x1", "name": "@amanasoft", "service": "twitter", "isQueuePaused": False, "isDisconnected": False, "isLocked": False},
             {"id": "th1", "name": "amanasoft", "service": "threads", "isQueuePaused": False, "isDisconnected": False, "isLocked": False},
             {"id": "li1", "name": "Amanasoft", "service": "linkedin", "isQueuePaused": False, "isDisconnected": False, "isLocked": False},
@@ -181,8 +184,11 @@ def test_idea_to_published(client):
     assert done.status_code == 200 and "Published ✓" in done.text
     post = client.get(f"/api/posts/{post['id']}").json()
     assert post["status"] == "published"
-    assert {c["service"] for c in post["publish_results"]["channels"]} == {"facebook", "twitter", "threads"}
-    assert {c["channelId"] for c in buffer_calls} == {"fb1", "x1", "th1"}
+    assert {c["service"] for c in post["publish_results"]["channels"]} == {"facebook", "instagram", "linkedin", "twitter", "threads"}
+    assert {c["channelId"] for c in buffer_calls} == {"fb1", "ig1", "li1", "x1", "th1"}
+    ig = next(c for c in buffer_calls if c["channelId"] == "ig1")
+    assert ig["metadata"] == {"instagram": {"type": "post", "shouldShareToFeed": True}} and ig["text"] == post["captions"]["instagram"]
+    assert next(c for c in buffer_calls if c["channelId"] == "li1")["text"] == post["captions"]["linkedin"]
     fb = next(c for c in buffer_calls if c["channelId"] == "fb1")
     assert fb["metadata"] == {"facebook": {"type": "post"}} and fb["assets"][0]["image"]["url"] == post["final_image_url"]
     assert next(c for c in buffer_calls if c["channelId"] == "x1")["text"] == post["captions"]["x"]
@@ -190,7 +196,7 @@ def test_idea_to_published(client):
 
     # clicking Approve again must not publish twice
     again = client.post(f"/review/{post['id']}", data={"action": "approve", "t": token})
-    assert "Already handled" in again.text and len(buffer_calls) == 3
+    assert "Already handled" in again.text and len(buffer_calls) == 5
 
 
 def test_reject_makes_new_version(client):
@@ -810,3 +816,29 @@ def test_three_cookies_are_tried_in_order_and_every_dead_one_is_emailed(monkeypa
     assert tried == ["A", "B", "C"]
     assert [a[0] for a in alerts] == ["A", "B"]
     assert alerts[1][1] == ["A: dead", "C: ok"]  # the email says which accounts still work
+
+
+def test_client_platforms_facebook_instagram_linkedin():
+    """The client's setup: a caption written for each of Facebook, Instagram and LinkedIn, each sent to its own channel."""
+    from app.brand import load_brand
+    from app.config import Settings
+    from app.publisher import _input
+    from app.writer import _check_copy, _copy_keys, _copy_system
+    assert Settings(post_platforms="facebook,instagram,linkedin").post_platform_list == ["facebook", "instagram", "linkedin"]
+    assert Settings(post_platforms="linkedin").post_platform_list == ["facebook", "linkedin"]  # Facebook text is always made
+    platforms = ["facebook", "instagram", "linkedin"]
+    assert _copy_keys(platforms) == ["title", "facebook", "instagram", "linkedin"]
+    prompt = _copy_system(load_brand(), None, platforms)
+    assert '"instagram": "..."' in prompt and '"linkedin": "..."' in prompt and '"x": "..."' not in prompt
+    check = _check_copy(load_brand(), platforms)
+    good = {"title": "t", "facebook": "Fast networks. 📞 +971 55 940 8284", "instagram": "Fast networks #Amanasoft",
+            "linkedin": "Reliable networks for UAE offices. 📞 +971 55 940 8284"}
+    assert check(good) == []
+    assert any("'linkedin' is missing" in p for p in check({**good, "linkedin": ""}))
+    assert any("30 hashtags" in p for p in check({**good, "instagram": " ".join(f"#tag{i}" for i in range(31))}))
+    caps = {"facebook": "FB text", "instagram": "IG text", "linkedin": "LI text"}
+    ch = lambda service: {"id": service, "service": service}  # noqa: E731
+    assert _input(ch("instagram"), caps, "https://img")["metadata"] == {"instagram": {"type": "post", "shouldShareToFeed": True}}
+    assert _input(ch("instagram"), caps, "https://img")["text"] == "IG text"
+    assert _input(ch("linkedin"), caps, "https://img")["text"] == "LI text" and "metadata" not in _input(ch("linkedin"), caps, "https://img")
+    assert _input(ch("twitter"), caps, "https://img")["text"] == "FB text"  # no X caption: the Facebook text is used

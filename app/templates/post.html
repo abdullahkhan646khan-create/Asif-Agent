@@ -114,7 +114,7 @@
     {% if c %}
     <div class="card">
       <h3 class="card-title">{{ icon("edit", 17) }} Captions</h3>
-      {% for label, key in [("Facebook", "facebook"), ("X (Twitter)", "x"), ("Threads", "threads")] %}
+      {% for label, key in [("Facebook", "facebook"), ("Instagram", "instagram"), ("LinkedIn", "linkedin"), ("X (Twitter)", "x"), ("Threads", "threads")] if c[key] %}
       <div class="caption-head"><b>{{ label }} <span class="muted" style="font-weight:400">· {{ (c[key] or "")|length }} chars</span></b>
         <button class="copy" onclick="copyText(this,'cap-{{ key }}')">Copy</button></div>
       <div class="caption" id="cap-{{ key }}">{{ c[key] }}</div>

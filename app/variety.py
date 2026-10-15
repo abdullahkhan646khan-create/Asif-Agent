@@ -191,6 +191,9 @@ def captions_repeat(captions: dict, history: list[dict]) -> list[str]:
             problems.append("the X caption is almost the same as an earlier one")
         if _ratio(captions.get("threads", ""), old.get("threads", "")) > 0.75:
             problems.append("the Threads caption is almost the same as an earlier one")
+        for key, name in (("instagram", "Instagram"), ("linkedin", "LinkedIn")):
+            if _jaccard(captions.get(key, ""), old.get(key, "")) > 0.3:
+                problems.append(f"the {name} caption repeats a lot of wording from an earlier post; rewrite it")
     return list(dict.fromkeys(problems))[:4]
 
 

@@ -5,6 +5,7 @@ import re
 
 from .brand import Brand
 from .composer import TEMPLATES
+from .config import get_settings
 from .llm import ask_json
 from .variety import POST_TYPES, brief_repeats, captions_repeat, recent_openings
 
@@ -284,47 +285,78 @@ def x_length(text: str) -> int:
     return sum(2 if ord(ch) > 0x2000 else 1 for ch in text)
 
 
-def _copy_system(brand: Brand, service: str | None = None) -> str:
+# Caption length limits per platform (characters); the AI is asked for less, see PLATFORM_RULES.
+CAPTION_LIMITS = {"instagram": 2200, "linkedin": 3000, "threads": 480}
+
+
+def _platform_rules(brand: Brand) -> dict[str, str]:
     c = brand.company
+    contact = f"📞 {c['phone']} · 🌐 {c['website']} · ✉️ {c['email']}"
+    return {
+        "facebook": f"""60-150 words. Strong first-line hook. 2-3 short paragraphs or a short ✅ list. End with the call to action
+  using the exact contact details: {contact}. Last line: 4-7 hashtags. At most 3 emojis besides the contact icons.""",
+        "instagram": f"""80-150 words, written for Instagram. A scroll-stopping first line (Instagram cuts it after about 125
+  characters), then short lines with line breaks and up to 5 emojis. Links are not clickable on Instagram: write the
+  contact as plain text, 📞 {c['phone']} · 🌐 {c['website']}. Last line: 10-15 relevant hashtags (service + Dubai/UAE tags).""",
+        "linkedin": f"""120-220 words, professional and insightful, for business owners and IT/facility managers. Open with a
+  business insight or a question, then the problem, the solution and the concrete benefits in 2-4 short paragraphs
+  (a short ✅ list is fine). No slang, at most 2 emojis. End with the call to action using the exact contact details:
+  {contact}. Last line: 3-5 hashtags.""",
+        "x": f"""MAXIMUM 240 characters in total including hashtags and the website. One punchy line, the benefit,
+  {c['website']}, and 1-2 hashtags. At most 1 emoji.""",
+        "threads": "MAXIMUM 450 characters. Conversational, 2-4 short lines, ends with the call to action. No hashtags.",
+    }
+
+
+def _copy_keys(platforms: list[str]) -> list[str]:
+    return ["title", *platforms] + (["threads_topic"] if "threads" in platforms else [])
+
+
+def _copy_system(brand: Brand, service: str | None = None, platforms: list[str] | None = None) -> str:
+    platforms = platforms or get_settings().post_platform_list
     tags = brand.profile["hashtags"]
     pool = "; ".join(f"{k}: {' '.join(v)}" for k, v in tags["by_category"].items())
+    rules = _platform_rules(brand)
+    lines = "\n".join(f"- {p}: {rules[p]}" for p in platforms)
+    if "threads" in platforms:
+        lines += "\n- threads_topic: ONE topic for Threads, 1-3 words, no '#', no '&' or '.', max 40 characters."
+    spec = ", ".join(f'"{k}": "..."' for k in _copy_keys(platforms))
     return f"""You are the social media copywriter for {brand.name}. Write the captions for ONE post from a creative brief.
+Each platform gets its own caption, written in that platform's style (not the same text copied).
 
 BRAND KIT
 {brand.context_text(all_services=False, focus=service)}
 
 PLATFORM RULES
-- facebook: 60-150 words. Strong first-line hook. 2-3 short paragraphs or a short ✅ list. End with the call to action
-  using the exact contact details: 📞 {c['phone']} · 🌐 {c['website']} · ✉️ {c['email']}. Last line: 4-7 hashtags.
-  At most 3 emojis besides the contact icons.
-- x: MAXIMUM 240 characters in total including hashtags and the website. One punchy line, the benefit, {c['website']},
-  and 1-2 hashtags. At most 1 emoji.
-- threads: MAXIMUM 450 characters. Conversational, 2-4 short lines, ends with the call to action. No hashtags.
-- threads_topic: ONE topic for Threads, 1-3 words, no '#', no '&' or '.', max 40 characters.
+{lines}
 - title: short internal title for the approval email, max 60 characters.
 - Hashtags always include {' '.join(tags['always'])}; pick the rest from: {pool}.
 - Contact details must be written exactly as above. Never write amanasoft.net.
 - Only use facts from the brand kit and the brief. Never invent numbers, prices, discounts, client names or awards.
 
 Reply with ONLY this JSON object:
-{{"title": "...", "facebook": "...", "x": "...", "threads": "...", "threads_topic": "..."}}"""
+{{{spec}}}"""
 
 
-def _check_copy(brand: Brand):
+def _check_copy(brand: Brand, platforms: list[str] | None = None):
     phone_digits = re.sub(r"\D", "", brand.company["phone"])
+    platforms = platforms or get_settings().post_platform_list
 
     def check(d: dict) -> list[str]:
         p = []
-        for k in ("title", "facebook", "x", "threads"):
+        for k in ("title", *platforms):
             if not str(d.get(k) or "").strip():
                 p.append(f"'{k}' is missing")
-        x_len = x_length(str(d.get("x") or ""))
-        if x_len > 270:
-            p.append(f"'x' is about {x_len} characters on X; it must be under 240. Make it shorter.")
-        threads_len = len(str(d.get("threads") or ""))
-        if threads_len > 480:
-            p.append(f"'threads' is {threads_len} characters; max 450")
-        all_text = " ".join(str(d.get(k) or "") for k in ("facebook", "x", "threads"))
+        if "x" in platforms:
+            x_len = x_length(str(d.get("x") or ""))
+            if x_len > 270:
+                p.append(f"'x' is about {x_len} characters on X; it must be under 240. Make it shorter.")
+        for k, limit in CAPTION_LIMITS.items():
+            if k in platforms and len(str(d.get(k) or "")) > limit:
+                p.append(f"'{k}' is {len(str(d[k]))} characters; max {limit}. Make it shorter.")
+        if "instagram" in platforms and len(re.findall(r"#\w+", str(d.get("instagram") or ""))) > 30:
+            p.append("'instagram' has more than 30 hashtags; Instagram allows 30 at most (use 10-15)")
+        all_text = " ".join(str(d.get(k) or "") for k in platforms)
         if "amanasoft.net" in all_text.lower():
             p.append("the website is amanasoft.ae, not amanasoft.net")
         for m in re.findall(r"\+?971[\d\s-]{6,}", all_text):
@@ -375,22 +407,25 @@ async def make_copy(brand: Brand, idea: str, brief: dict, plan: dict, history: l
     if feedback and feedback.get("reason"):
         user += f"\n\nThe previous version was rejected. Reason: {feedback['reason']}. Write clearly different captions."
 
-    base_check = _check_copy(brand)
+    platforms = get_settings().post_platform_list
+    base_check = _check_copy(brand, platforms)
     data, used, problems = {}, "", []
     for round_no in range(3):
         extra = ("\n\nYOUR LAST TRY REPEATED EARLIER POSTS:\n- " + "\n- ".join(problems)) if problems else ""
-        data, used = await ask_json(_copy_system(brand, brief.get("service")), user + extra,
+        data, used = await ask_json(_copy_system(brand, brief.get("service"), platforms), user + extra,
                                     lambda d: base_check(d) or captions_repeat(d, history),
                                     temperature=0.75 + 0.05 * round_no)
         problems = captions_repeat(data, history)
         if not problems:
             break
-    out = {k: str(data.get(k) or "").strip() for k in ("title", "facebook", "x", "threads", "threads_topic")}
-    out["x"] = _fit_x(out["x"])
-    if len(out["threads"]) > 490:
-        out["threads"] = out["threads"][:480].rsplit(" ", 1)[0] + "…"
-    topic = re.sub(r"[#&.]", "", out["threads_topic"]).strip()[:40]
-    out["threads_topic"] = topic
+    out = {k: str(data.get(k) or "").strip() for k in _copy_keys(platforms)}
+    if "x" in out:
+        out["x"] = _fit_x(out["x"])
+    for k, limit in CAPTION_LIMITS.items():  # last resort only; the checks above ask the AI to shorten first
+        if k in out and len(out[k]) > limit:
+            out[k] = out[k][:limit - 10].rsplit(" ", 1)[0] + "…"
+    if "threads_topic" in out:
+        out["threads_topic"] = re.sub(r"[#&.]", "", out["threads_topic"]).strip()[:40]
     out["title"] = out["title"][:80] or f"{brief['headline_top']} {brief['headline_highlight']}"
     out["_model"] = used
     if problems:

@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     buffer_api_key: str = ""
     buffer_channel_ids: str = ""  # optional; empty = every Facebook, X and Threads channel in Buffer
     publish_mode: str = "shareNow"  # shareNow | addToQueue
+    # captions are written for these platforms; a Buffer channel of another kind gets the Facebook text
+    post_platforms: str = "facebook,instagram,linkedin"  # any of: facebook, instagram, linkedin, x, threads
     dry_run_publish: bool = False  # true = approve does everything except posting
 
     @field_validator("*", mode="before")
@@ -78,6 +80,12 @@ class Settings(BaseSettings):
     @property
     def openrouter_model_list(self) -> list[str]:
         return [m.strip() for m in self.openrouter_models.split(",") if m.strip()]
+
+    @property
+    def post_platform_list(self) -> list[str]:
+        known = ("facebook", "instagram", "linkedin", "x", "threads")
+        chosen = [p.strip().lower() for p in self.post_platforms.split(",") if p.strip().lower() in known]
+        return list(dict.fromkeys(["facebook", *chosen]))  # Facebook text is always there (the fallback)
 
     @property
     def buffer_channel_id_list(self) -> list[str]:

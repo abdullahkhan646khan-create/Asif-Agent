@@ -49,7 +49,7 @@
       {% if when_label and not auto %}<br><a href="{{ cancel_url }}" style="color:#6B7280;">Skip this time (publish nothing)</a>{% endif %}
     </div>
   </td></tr>
-  {% for label, key, count, limit in [("Facebook", "facebook", none, none), ("X (Twitter)", "x", x_len, 280), ("Threads", "threads", threads_len, 500)] %}
+  {% for label, key, count, limit in platforms %}
   <tr><td style="padding:0 24px 16px;">
     <div style="font-size:12px;font-weight:bold;letter-spacing:.06em;text-transform:uppercase;color:#3676C6;margin-bottom:6px;">
       {{ label }}{% if count is not none %} <span style="color:#9CA3AF;font-weight:normal;">· {{ count }}/{{ limit }} characters</span>{% endif %}

@@ -1,4 +1,4 @@
-"""Publishing through Buffer's API (https://developers.buffer.com): Facebook, X and Threads channels."""
+"""Publishing through Buffer's API (https://developers.buffer.com): Facebook, Instagram, LinkedIn, X and Threads."""
 
 import asyncio
 import logging
@@ -10,8 +10,8 @@ from .config import get_settings
 
 log = logging.getLogger("buffer")
 API = "https://api.buffer.com"
-SERVICES = {"facebook": "Facebook", "twitter": "X (Twitter)", "threads": "Threads"}
-CAPTION_FOR = {"facebook": "facebook", "twitter": "x", "threads": "threads"}
+SERVICES = {"facebook": "Facebook", "instagram": "Instagram", "linkedin": "LinkedIn", "twitter": "X (Twitter)", "threads": "Threads"}
+CAPTION_FOR = {"facebook": "facebook", "instagram": "instagram", "linkedin": "linkedin", "twitter": "x", "threads": "threads"}
 
 CREATE_POST = """
 mutation CreatePost($input: CreatePostInput!) {
@@ -88,7 +88,7 @@ def _input(channel: dict, captions: dict, image_url: str, mode: str | None = Non
     s = get_settings()
     data = {
         "channelId": channel["id"],
-        "text": captions[CAPTION_FOR.get(service, "facebook")],
+        "text": captions.get(CAPTION_FOR.get(service, "facebook")) or captions["facebook"],
         "schedulingType": "automatic",
         "mode": mode or s.publish_mode,
         "assets": [{"image": {"url": image_url}}],
@@ -96,6 +96,8 @@ def _input(channel: dict, captions: dict, image_url: str, mode: str | None = Non
     }
     if service == "facebook":
         data["metadata"] = {"facebook": {"type": "post"}}
+    elif service == "instagram":
+        data["metadata"] = {"instagram": {"type": "post", "shouldShareToFeed": True}}  # both required by Buffer
     elif service == "threads" and captions.get("threads_topic"):
         data["metadata"] = {"threads": {"topic": captions["threads_topic"]}}
     return data
@@ -109,7 +111,7 @@ async def publish(captions: dict, image_url: str, only_channel_ids: list[str] | 
     if only_channel_ids:
         channels = [c for c in channels if c["id"] in only_channel_ids]
     if not channels:
-        raise BufferError("No Facebook, X or Threads channel found in Buffer. Connect them in Buffer first.")
+        raise BufferError("No Facebook, Instagram, LinkedIn, X or Threads channel found in Buffer. Connect them in Buffer first.")
     results = []
     for ch in channels:
         res = {"channel_id": ch["id"], "service": ch["service"], "name": ch["name"],
