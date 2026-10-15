@@ -842,3 +842,49 @@ def test_client_platforms_facebook_instagram_linkedin():
     assert _input(ch("instagram"), caps, "https://img")["text"] == "IG text"
     assert _input(ch("linkedin"), caps, "https://img")["text"] == "LI text" and "metadata" not in _input(ch("linkedin"), caps, "https://img")
     assert _input(ch("twitter"), caps, "https://img")["text"] == "FB text"  # no X caption: the Facebook text is used
+
+
+def test_every_buffer_channel_type_gets_its_own_post(monkeypatch):
+    """Whatever the client connects in Buffer is detected; each type gets the right caption and settings."""
+    from app import publisher
+    from app.brand import load_brand
+    from app.writer import _check_copy, _copy_keys
+
+    def chan(i, service, **extra):
+        return {"id": i, "name": f"{service} page", "service": service, "isQueuePaused": False, "isDisconnected": False,
+                "isLocked": False, **extra}
+    channels = [chan("fb", "facebook"), chan("tt", "tiktok"), chan("pin", "pinterest", metadata={"boards": [{"serviceId": "b1", "name": "Ideas"}]}),
+                chan("gb", "googlebusiness"), chan("bs", "bluesky"), chan("ma", "mastodon"), chan("su", "substack"),
+                chan("yt", "youtube"), chan("wa", "whatsapp")]
+
+    async def gql(query, variables=None):
+        if "organizations" in query:
+            return {"account": {"organizations": [{"id": "o", "name": "A"}]}}
+        return {"channels": channels}
+    monkeypatch.setattr(publisher, "gql", gql)
+    monkeypatch.setattr(publisher.get_settings(), "buffer_channel_ids", "")
+    # captions are written for exactly the connected platforms (YouTube and WhatsApp are left alone)
+    assert run(publisher.caption_platforms()) == ["facebook", "tiktok", "pinterest", "googlebusiness", "bluesky", "mastodon", "substack"]
+    assert _copy_keys(["facebook", "tiktok", "pinterest"]) == ["title", "facebook", "tiktok", "pinterest", "tiktok_title", "pinterest_title"]
+
+    fb_text = ("Is your warehouse safe at night? Our HD CCTV lets you watch every aisle live from your phone. " * 4
+               + "\n📞 +971 55 940 8284 · 🌐 amanasoft.ae #Amanasoft #Dubai #UAE")
+    caps = {"facebook": fb_text, "tiktok": "TikTok text #Dubai", "tiktok_title": "Watch your warehouse live",
+            "pinterest": "Pin text amanasoft.ae", "pinterest_title": "HD CCTV for Dubai warehouses", "title": "t"}
+    by = {c["id"]: c for c in channels}
+    tt = publisher._input(by["tt"], caps, "https://img")
+    assert tt["text"] == "TikTok text #Dubai" and tt["metadata"] == {"tiktok": {"title": "Watch your warehouse live", "isAiGenerated": True}}
+    pin = publisher._input(by["pin"], caps, "https://img")["metadata"]["pinterest"]
+    assert pin == {"title": "HD CCTV for Dubai warehouses", "url": "https://amanasoft.ae", "boardServiceId": "b1"}
+    gb = publisher._input(by["gb"], caps, "https://img")
+    assert gb["metadata"] == {"google": {"type": "whats_new", "detailsWhatsNew": {"button": "learn_more", "link": "https://amanasoft.ae"}}}
+    # channels connected after the captions were written: a fitted Facebook text, within that platform's limit
+    assert "+971" not in gb["text"] and "#" not in gb["text"]  # Google: no phone number, no hashtags
+    bs = publisher._input(by["bs"], caps, "https://img")["text"]
+    assert len(bs) <= 300 and not bs.endswith(" ")
+    assert len(publisher._input(by["ma"], caps, "https://img")["text"]) <= 500
+
+    check = _check_copy(load_brand(), ["facebook", "googlebusiness", "tiktok"])
+    bad = {"title": "t", "facebook": "ok", "googlebusiness": "Call +971 55 940 8284 now #Dubai", "tiktok": "tt"}
+    problems = " | ".join(check(bad))
+    assert "phone number" in problems and "hashtags" in problems and "'tiktok_title' is missing" in problems

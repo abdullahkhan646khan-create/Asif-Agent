@@ -138,7 +138,9 @@ async def send(to: list[str], subject: str, html: str, text: str, inline: dict[s
 
 # (label, caption key, character limit or None) in the order they are shown
 CAPTION_PLATFORMS = [("Facebook", "facebook", None), ("Instagram", "instagram", 2200), ("LinkedIn", "linkedin", 3000),
-                     ("X (Twitter)", "x", 280), ("Threads", "threads", 500)]
+                     ("X (Twitter)", "x", 280), ("Threads", "threads", 500), ("TikTok", "tiktok", 2200),
+                     ("Pinterest", "pinterest", 500), ("Google Business", "googlebusiness", 1500),
+                     ("Bluesky", "bluesky", 300), ("Mastodon", "mastodon", 500), ("Substack", "substack", 2000)]
 
 
 def caption_blocks(captions: dict) -> list[tuple]:

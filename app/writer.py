@@ -286,7 +286,10 @@ def x_length(text: str) -> int:
 
 
 # Caption length limits per platform (characters); the AI is asked for less, see PLATFORM_RULES.
-CAPTION_LIMITS = {"instagram": 2200, "linkedin": 3000, "threads": 480}
+CAPTION_LIMITS = {"instagram": 2200, "linkedin": 3000, "threads": 480, "tiktok": 2200, "pinterest": 500,
+                  "googlebusiness": 1500, "bluesky": 300, "mastodon": 500, "substack": 2000,
+                  "tiktok_title": 90, "pinterest_title": 100}
+EXTRA_FIELDS = {"threads": "threads_topic", "tiktok": "tiktok_title", "pinterest": "pinterest_title"}
 
 
 def _platform_rules(brand: Brand) -> dict[str, str]:
@@ -305,11 +308,23 @@ def _platform_rules(brand: Brand) -> dict[str, str]:
         "x": f"""MAXIMUM 240 characters in total including hashtags and the website. One punchy line, the benefit,
   {c['website']}, and 1-2 hashtags. At most 1 emoji.""",
         "threads": "MAXIMUM 450 characters. Conversational, 2-4 short lines, ends with the call to action. No hashtags.",
+        "tiktok": f"""60-120 words for a TikTok photo post: casual and energetic, a hook in the first line, short lines.
+  Links are not clickable: write {c['website']} as text. Last line: 3-6 hashtags.""",
+        "pinterest": f"""MAXIMUM 450 characters: 1-3 keyword-rich sentences saying what the service is and its benefit for
+  businesses in Dubai/UAE, then {c['website']}. 2-4 hashtags.""",
+        "googlebusiness": f"""60-120 words for a Google Business Profile update: a clear local message for businesses in
+  Dubai and the UAE, the service and its benefits, ends by inviting them to visit {c['website']}. NO phone numbers
+  (Google rejects posts that contain them), NO hashtags, at most 1 emoji.""",
+        "bluesky": f"""MAXIMUM 280 characters in total: 1-2 short sentences with the benefit, {c['website']}, 1-2 hashtags.""",
+        "mastodon": f"""MAXIMUM 450 characters: 2-3 short sentences, {c['website']}, 2-3 hashtags written in CamelCase
+  (e.g. #SmartSecurity).""",
+        "substack": f"""A short Substack Note, 50-120 words: a helpful tip or insight about the topic, then how
+  {brand.name} helps and {c['website']}. No hashtags.""",
     }
 
 
 def _copy_keys(platforms: list[str]) -> list[str]:
-    return ["title", *platforms] + (["threads_topic"] if "threads" in platforms else [])
+    return ["title", *platforms] + [EXTRA_FIELDS[p] for p in platforms if p in EXTRA_FIELDS]
 
 
 def _copy_system(brand: Brand, service: str | None = None, platforms: list[str] | None = None) -> str:
@@ -320,6 +335,10 @@ def _copy_system(brand: Brand, service: str | None = None, platforms: list[str] 
     lines = "\n".join(f"- {p}: {rules[p]}" for p in platforms)
     if "threads" in platforms:
         lines += "\n- threads_topic: ONE topic for Threads, 1-3 words, no '#', no '&' or '.', max 40 characters."
+    if "tiktok" in platforms:
+        lines += "\n- tiktok_title: a catchy title for the TikTok photo post, max 80 characters, no hashtags."
+    if "pinterest" in platforms:
+        lines += "\n- pinterest_title: a clear, searchable Pin title, max 90 characters, no hashtags."
     spec = ", ".join(f'"{k}": "..."' for k in _copy_keys(platforms))
     return f"""You are the social media copywriter for {brand.name}. Write the captions for ONE post from a creative brief.
 Each platform gets its own caption, written in that platform's style (not the same text copied).
@@ -356,6 +375,17 @@ def _check_copy(brand: Brand, platforms: list[str] | None = None):
                 p.append(f"'{k}' is {len(str(d[k]))} characters; max {limit}. Make it shorter.")
         if "instagram" in platforms and len(re.findall(r"#\w+", str(d.get("instagram") or ""))) > 30:
             p.append("'instagram' has more than 30 hashtags; Instagram allows 30 at most (use 10-15)")
+        for extra in (EXTRA_FIELDS[q] for q in platforms if q in EXTRA_FIELDS and EXTRA_FIELDS[q] != "threads_topic"):
+            if not str(d.get(extra) or "").strip():
+                p.append(f"'{extra}' is missing")
+            elif len(str(d[extra])) > CAPTION_LIMITS[extra]:
+                p.append(f"'{extra}' is {len(str(d[extra]))} characters; max {CAPTION_LIMITS[extra]}")
+        if "googlebusiness" in platforms:
+            g = str(d.get("googlebusiness") or "")
+            if re.search(r"\+?\d[\d\s-]{7,}\d", g):
+                p.append("'googlebusiness' must not contain a phone number (Google rejects such posts); remove it")
+            if "#" in g:
+                p.append("'googlebusiness' must not contain hashtags")
         all_text = " ".join(str(d.get(k) or "") for k in platforms)
         if "amanasoft.net" in all_text.lower():
             p.append("the website is amanasoft.ae, not amanasoft.net")
@@ -394,7 +424,7 @@ def _fit_x(text: str) -> str:
 
 
 async def make_copy(brand: Brand, idea: str, brief: dict, plan: dict, history: list[dict],
-                    feedback: dict | None = None) -> dict:
+                    feedback: dict | None = None, platforms: list[str] | None = None) -> dict:
     public_brief = {k: v for k, v in brief.items() if not k.startswith("_") and k != "image_prompt"}
     user = f"IDEA: {idea or '(none, use the brief)'}\n\nCREATIVE BRIEF: {json.dumps(public_brief, ensure_ascii=False)}"
     user += f"\n\nCAPTION STYLE for this post: {plan['caption_style']}."
@@ -407,7 +437,7 @@ async def make_copy(brand: Brand, idea: str, brief: dict, plan: dict, history: l
     if feedback and feedback.get("reason"):
         user += f"\n\nThe previous version was rejected. Reason: {feedback['reason']}. Write clearly different captions."
 
-    platforms = get_settings().post_platform_list
+    platforms = list(dict.fromkeys(["facebook", *(platforms or get_settings().post_platform_list)]))
     base_check = _check_copy(brand, platforms)
     data, used, problems = {}, "", []
     for round_no in range(3):
@@ -426,6 +456,9 @@ async def make_copy(brand: Brand, idea: str, brief: dict, plan: dict, history: l
             out[k] = out[k][:limit - 10].rsplit(" ", 1)[0] + "…"
     if "threads_topic" in out:
         out["threads_topic"] = re.sub(r"[#&.]", "", out["threads_topic"]).strip()[:40]
+    for k in ("tiktok_title", "pinterest_title"):
+        if k in out:
+            out[k] = re.sub(r"#\w+", "", out[k]).strip()[:CAPTION_LIMITS[k]]
     out["title"] = out["title"][:80] or f"{brief['headline_top']} {brief['headline_highlight']}"
     out["_model"] = used
     if problems:

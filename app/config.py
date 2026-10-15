@@ -60,7 +60,9 @@ class Settings(BaseSettings):
     buffer_channel_ids: str = ""  # optional; empty = every Facebook, X and Threads channel in Buffer
     publish_mode: str = "shareNow"  # shareNow | addToQueue
     # captions are written for these platforms; a Buffer channel of another kind gets the Facebook text
-    post_platforms: str = "facebook,instagram,linkedin"  # any of: facebook, instagram, linkedin, x, threads
+    # Normally the platforms are read from the channels connected in Buffer; this list is used only if Buffer
+    # cannot be reached while a post is being written.
+    post_platforms: str = "facebook,instagram,linkedin"
     dry_run_publish: bool = False  # true = approve does everything except posting
 
     @field_validator("*", mode="before")
@@ -83,7 +85,8 @@ class Settings(BaseSettings):
 
     @property
     def post_platform_list(self) -> list[str]:
-        known = ("facebook", "instagram", "linkedin", "x", "threads")
+        known = ("facebook", "instagram", "linkedin", "x", "threads", "tiktok", "pinterest", "googlebusiness",
+                 "bluesky", "mastodon", "substack")
         chosen = [p.strip().lower() for p in self.post_platforms.split(",") if p.strip().lower() in known]
         return list(dict.fromkeys(["facebook", *chosen]))  # Facebook text is always there (the fallback)
 

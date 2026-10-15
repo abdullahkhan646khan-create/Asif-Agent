@@ -114,12 +114,16 @@
     {% if c %}
     <div class="card">
       <h3 class="card-title">{{ icon("edit", 17) }} Captions</h3>
-      {% for label, key in [("Facebook", "facebook"), ("Instagram", "instagram"), ("LinkedIn", "linkedin"), ("X (Twitter)", "x"), ("Threads", "threads")] if c[key] %}
+      {% for label, key in [("Facebook", "facebook"), ("Instagram", "instagram"), ("LinkedIn", "linkedin"), ("X (Twitter)", "x"),
+                            ("Threads", "threads"), ("TikTok", "tiktok"), ("Pinterest", "pinterest"), ("Google Business", "googlebusiness"),
+                            ("Bluesky", "bluesky"), ("Mastodon", "mastodon"), ("Substack", "substack")] if c[key] %}
       <div class="caption-head"><b>{{ label }} <span class="muted" style="font-weight:400">· {{ (c[key] or "")|length }} chars</span></b>
         <button class="copy" onclick="copyText(this,'cap-{{ key }}')">Copy</button></div>
       <div class="caption" id="cap-{{ key }}">{{ c[key] }}</div>
       {% endfor %}
       {% if c.threads_topic %}<p class="muted small">Threads topic: {{ c.threads_topic }}</p>{% endif %}
+      {% if c.tiktok_title %}<p class="muted small">TikTok title: {{ c.tiktok_title }}</p>{% endif %}
+      {% if c.pinterest_title %}<p class="muted small">Pin title: {{ c.pinterest_title }}</p>{% endif %}
     </div>
     {% endif %}
 

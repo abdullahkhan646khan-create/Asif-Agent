@@ -123,7 +123,12 @@ async def generate(post_id: str) -> None:
                 if not post.get("brief"):
                     brief = await make_brief(brand, idea, plan, past, feedback)
                     post = await store.update_post(post_id, brief=brief)
-                captions = await make_copy(brand, idea, post["brief"], plan, past, feedback)
+                try:  # write a caption for every platform connected in Buffer right now
+                    platforms = await publisher.caption_platforms()
+                except Exception as e:
+                    platforms = None  # Buffer not reachable: the POST_PLATFORMS setting is used
+                    log.warning("Could not read the Buffer channels (%s); using POST_PLATFORMS", e)
+                captions = await make_copy(brand, idea, post["brief"], plan, past, feedback, platforms)
                 post = await store.update_post(post_id, captions=captions)
 
             if not post.get("raw_image_path"):

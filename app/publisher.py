@@ -1,7 +1,14 @@
-"""Publishing through Buffer's API (https://developers.buffer.com): Facebook, Instagram, LinkedIn, X and Threads."""
+"""Publishing through Buffer's API (https://developers.buffer.com).
+
+The channels are read from Buffer every time a post goes out, so whatever the client connects, reconnects or
+removes in Buffer is picked up by itself. Supported: Facebook, Instagram, LinkedIn, X, Threads, TikTok (picture
+posts), Pinterest, Google Business Profile, Bluesky, Mastodon and Substack. YouTube (video only), WhatsApp and
+Start Page channels are left alone.
+"""
 
 import asyncio
 import logging
+import re
 import time
 
 import httpx
@@ -10,8 +17,16 @@ from .config import get_settings
 
 log = logging.getLogger("buffer")
 API = "https://api.buffer.com"
-SERVICES = {"facebook": "Facebook", "instagram": "Instagram", "linkedin": "LinkedIn", "twitter": "X (Twitter)", "threads": "Threads"}
-CAPTION_FOR = {"facebook": "facebook", "instagram": "instagram", "linkedin": "linkedin", "twitter": "x", "threads": "threads"}
+SERVICES = {"facebook": "Facebook", "instagram": "Instagram", "linkedin": "LinkedIn", "twitter": "X (Twitter)",
+            "threads": "Threads", "tiktok": "TikTok", "pinterest": "Pinterest", "googlebusiness": "Google Business",
+            "bluesky": "Bluesky", "mastodon": "Mastodon", "substack": "Substack"}
+# Buffer channel type -> caption key (the AI writes one caption per key)
+CAPTION_FOR = {"facebook": "facebook", "instagram": "instagram", "linkedin": "linkedin", "twitter": "x",
+               "threads": "threads", "tiktok": "tiktok", "pinterest": "pinterest", "googlebusiness": "googlebusiness",
+               "bluesky": "bluesky", "mastodon": "mastodon", "substack": "substack"}
+# safe text length per caption key, used when a channel has no caption of its own (it was connected later)
+FALLBACK_LIMIT = {"x": 260, "threads": 480, "bluesky": 290, "mastodon": 480, "pinterest": 480,
+                  "googlebusiness": 1400, "tiktok": 2100, "instagram": 2100, "substack": 1900, "linkedin": 2900}
 
 CREATE_POST = """
 mutation CreatePost($input: CreatePostInput!) {
@@ -52,7 +67,8 @@ async def list_channels() -> list[dict]:
     for org in orgs["account"]["organizations"]:
         data = await gql(
             "query C($id: OrganizationId!) { channels(input: {organizationId: $id}) "
-            "{ id name service isQueuePaused isDisconnected isLocked } }",
+            "{ id name service isQueuePaused isDisconnected isLocked "
+            "metadata { ... on PinterestMetadata { boards { serviceId name } } } } }",
             {"id": org["id"]},
         )
         channels += [{**c, "organization": org["name"]} for c in data["channels"]]
@@ -65,6 +81,36 @@ async def target_channels() -> list[dict]:
     if wanted:
         return [c for c in channels if c["id"] in wanted]
     return [c for c in channels if c["service"] in SERVICES]
+
+
+async def caption_platforms() -> list[str]:
+    """The caption keys for the channels posts go to right now (Facebook always included: it is the base text)."""
+    keys = [CAPTION_FOR[c["service"]] for c in await target_channels() if c["service"] in CAPTION_FOR]
+    return list(dict.fromkeys(["facebook", *keys]))
+
+
+def _shorten(text: str, limit: int) -> str:
+    """Cut a long caption at a line or sentence end before the limit (never mid-word)."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    head = text[:limit - 1]
+    cut = max(head.rfind("\n"), head.rfind(". "), head.rfind("! "), head.rfind("? "))
+    if cut < limit * 0.5:
+        cut = head.rfind(" ")
+    return head[:cut + 1].rstrip() + ("" if head[cut] in ".!?" else "…")
+
+
+def caption_for(service: str, captions: dict) -> str:
+    """This channel's own caption; if it has none (connected after the post was written), a fitted Facebook text."""
+    key = CAPTION_FOR.get(service, "facebook")
+    if captions.get(key):
+        return captions[key]
+    text = captions.get("facebook") or ""
+    if key == "googlebusiness":  # Google rejects posts with phone numbers; hashtags do nothing there
+        text = re.sub(r"#\w+", "", re.sub(r"[📞☎]?\s*\+?\d[\d\s-]{7,}\d", "", text))
+        text = re.sub(r"[ \t]+", " ", re.sub(r"[ ·|]+\n", "\n", text)).strip()
+    return _shorten(text, FALLBACK_LIMIT.get(key, 2000))
 
 
 _label_cache: dict = {"at": 0.0, "text": None}
@@ -83,12 +129,17 @@ async def target_label() -> str:
     return text
 
 
+def _website() -> str:
+    from .brand import load_brand
+    return load_brand().company.get("website_url") or f"https://{load_brand().company['website']}"
+
+
 def _input(channel: dict, captions: dict, image_url: str, mode: str | None = None) -> dict:
     service = channel["service"]
     s = get_settings()
     data = {
         "channelId": channel["id"],
-        "text": captions.get(CAPTION_FOR.get(service, "facebook")) or captions["facebook"],
+        "text": caption_for(service, captions),
         "schedulingType": "automatic",
         "mode": mode or s.publish_mode,
         "assets": [{"image": {"url": image_url}}],
@@ -98,6 +149,17 @@ def _input(channel: dict, captions: dict, image_url: str, mode: str | None = Non
         data["metadata"] = {"facebook": {"type": "post"}}
     elif service == "instagram":
         data["metadata"] = {"instagram": {"type": "post", "shouldShareToFeed": True}}  # both required by Buffer
+    elif service == "tiktok":  # picture post; TikTok asks for AI-made pictures to be labelled
+        data["metadata"] = {"tiktok": {"title": (captions.get("tiktok_title") or captions.get("title") or "")[:90],
+                                       "isAiGenerated": True}}
+    elif service == "pinterest":
+        boards = (channel.get("metadata") or {}).get("boards") or []
+        pin = {"title": (captions.get("pinterest_title") or captions.get("title") or "")[:100], "url": _website()}
+        if boards:
+            pin["boardServiceId"] = boards[0]["serviceId"]
+        data["metadata"] = {"pinterest": pin}
+    elif service == "googlebusiness":  # a "What's new" post with a Learn more button to the website
+        data["metadata"] = {"google": {"type": "whats_new", "detailsWhatsNew": {"button": "learn_more", "link": _website()}}}
     elif service == "threads" and captions.get("threads_topic"):
         data["metadata"] = {"threads": {"topic": captions["threads_topic"]}}
     return data
