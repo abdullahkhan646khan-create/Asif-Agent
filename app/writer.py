@@ -240,7 +240,7 @@ def _clean_brief(d: dict, brand: Brand, template_pref: str | None) -> dict:
 
 
 async def make_brief(brand: Brand, idea: str, plan: dict, history: list[dict],
-                     feedback: dict | None = None) -> dict:
+                     feedback: dict | None = None, message: str = "") -> dict:
     """Write the brief; if it repeats an earlier post, write it again (up to 3 rounds)."""
     base_check = _check_brief(brand)
     user = _director_user(idea, plan, history, feedback)
@@ -263,7 +263,7 @@ async def make_brief(brand: Brand, idea: str, plan: dict, history: list[dict],
     brief["_plan"] = {**plan, "service": brief["service"] if brief["service"] != "General" else plan["service"]}
     if problems:
         brief["_variety_warning"] = problems
-    return brief
+    return use_message(brief, message) if message.strip() else brief
 
 
 CLEAN_LIMITS = {"headline_top": 40, "headline_highlight": 24, "subheadline": 72}
@@ -305,6 +305,31 @@ Reply with ONLY this JSON object:
   "headline_highlight": "...", "subheadline": "...", "image_prompt": "..."}}"""
 
 
+def split_message(message: str) -> tuple[str, str]:
+    """The client's exact words for the picture → (headline, smaller line). Never reworded: a short message is the
+    headline; a longer one is split at its first line break or sentence end."""
+    text = re.sub(r"[ \t]+", " ", str(message or "")).strip()
+    if "\n" in text:
+        head, rest = text.split("\n", 1)
+        return head.strip(), " ".join(rest.split())
+    m = re.search(r"(?<=[.!?:])\s+|\s[–—-]\s", text)
+    if m and m.start() <= 60 and text[m.end():].strip():
+        return text[:m.start()].strip(), text[m.end():].strip()   # "Arrive in style." + "Book your chauffeur today."
+    if len(text) <= 45:
+        return text, ""
+    cut = text[:60].rfind(", ")
+    if cut >= 20:  # keep the comma with the headline: the client's text stays exact
+        return text[:cut + 1].strip(), text[cut + 1:].strip()
+    cut = text[:50].rfind(" ")
+    return text[:cut].strip(), text[cut:].strip()
+
+
+def use_message(brief: dict, message: str) -> dict:
+    """Put the client's message on the picture, word for word."""
+    head, line = split_message(message)
+    return {**brief, "headline_top": head, "headline_highlight": "", "subheadline": line, "_message": message.strip()}
+
+
 def _check_clean(brand: Brand):
     def check(d: dict) -> list[str]:
         p = []
@@ -324,12 +349,19 @@ def _check_clean(brand: Brand):
 
 
 async def make_clean_brief(brand: Brand, idea: str, history: list[dict], feedback: dict | None = None,
-                           industry: str | None = None, scene: str | None = None) -> dict:
+                           industry: str | None = None, scene: str | None = None, service: str | None = None,
+                           message: str = "") -> dict:
     """Brief for the clean style: a typed idea (followed exactly) or an industry demo."""
     if industry:
         user = f"INDUSTRY: {industry}\nSCENE for the photo: {scene}" + (f"\nCLIENT NOTE (follow it): {idea}" if idea else "")
     else:
         user = f"IDEA: {idea}"
+        if service and brand.service(service):
+            user += (f"\nSERVICE: {service}. Connect the idea to this {brand.name} service in the text and the picture, "
+                     f"and use it as 'service'.")
+    if message.strip():
+        user += (f"\nTEXT ON THE PICTURE (written by the client, used word for word): \"{message.strip()}\". "
+                 "Make the photo fit this message.")
     recent = [h["brief"] for h in history[:12] if h.get("brief")]
     if recent:
         user += "\n\nRECENT HEADLINES - write a different one:\n" + "\n".join(
@@ -346,11 +378,13 @@ async def make_clean_brief(brand: Brand, idea: str, history: list[dict], feedbac
         **{k: _trim(data.get(k), limit) for k, limit in CLEAN_LIMITS.items()},
         "image_prompt": str(data.get("image_prompt") or "").strip(), "_model": used,
     }
+    if service and brand.service(service) and not industry:
+        brief["service"] = service
     if industry:
         brief.update(_eyebrow=industry, _contact="site", _industry=industry)
     else:
         brief["_contact"] = "full"
-    return brief
+    return use_message(brief, message) if message.strip() else brief
 
 
 def image_prompt(brand: Brand, brief: dict) -> str:
@@ -551,6 +585,8 @@ async def make_copy(brand: Brand, idea: str, brief: dict, plan: dict, history: l
     user = f"IDEA: {idea or '(none, use the brief)'}\n\nCREATIVE BRIEF: {json.dumps(public_brief, ensure_ascii=False)}"
     if plan.get("caption_style"):
         user += f"\n\nCAPTION STYLE for this post: {plan['caption_style']}."
+    if brief.get("_message"):
+        user += f"\nTEXT ON THE PICTURE (the client's own words): \"{brief['_message']}\". The captions build on it."
     openings = [o for o in recent_openings(history) if o]
     if openings:
         user += "\nDo NOT start the Facebook caption like any of these recent openings:\n- " + "\n- ".join(openings)

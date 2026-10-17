@@ -960,3 +960,32 @@ def test_demo_industry_auto_picks_the_least_used(client):
     wait_for(client, demo["id"], ["demo_ready", "failed"])
     page = client.get("/demos").text
     assert 'id="industry"' in page and "Auto (a different industry each time)" in page
+
+
+def test_message_on_the_post_is_used_word_for_word(client):
+    """Prompt → picture and topic; Message → the exact words on the picture; Service → the service it connects to."""
+    prompts.clear()
+    body = {"idea": "A black luxury car in front of the Burj Khalifa at night", "message": "Arrive in style. Book your chauffeur today.",
+            "service": "Web Chatbot"}
+    post = client.post("/api/posts", json=body).json()
+    post = wait_for(client, post["id"], ["pending_review", "failed"])
+    assert post["status"] == "pending_review", post["error"]
+    b = post["brief"]
+    assert (b["headline_top"], b["headline_highlight"], b["subheadline"]) == ("Arrive in style.", "", "Book your chauffeur today.")
+    assert b["service"] == "Web Chatbot" and b["template"] == "clean"
+    director = next(u for sy, u in prompts if "ON-IMAGE TEXT" in sy)
+    assert body["idea"] in director and "SERVICE: Web Chatbot" in director and body["message"] in director
+    copy_user = next(u for sy, u in prompts if "copywriter" in sy)
+    assert body["message"] in copy_user  # the captions build on the message
+
+    # only a message: it is also the prompt
+    post = client.post("/api/posts", json={"message": "Your network, always on"}).json()
+    post = wait_for(client, post["id"], ["pending_review", "failed"])
+    assert post["idea"] == "Your network, always on" and post["brief"]["headline_top"] == "Your network, always on"
+
+    # a branded layout keeps the message too
+    post = client.post("/api/posts", json={"idea": "Fiber cabling for offices", "message": "Fast, clean, tested", "template": "split"}).json()
+    post = wait_for(client, post["id"], ["pending_review", "failed"])
+    assert post["brief"]["template"] == "split" and post["brief"]["headline_top"] == "Fast, clean, tested"
+
+    assert client.post("/api/posts", json={"idea": "x" * 10, "message": "y" * 151}).status_code == 400

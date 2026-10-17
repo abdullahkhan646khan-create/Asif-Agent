@@ -13,7 +13,10 @@
   {% set layout_names = {"wave": "Blue wave", "spotlight": "Dark photo", "skyline": "Dubai night",
                          "split": "Diagonal split", "cards": "Benefit cards", "frame": "White card"} %}
   <form id="new-post">
-    <textarea id="idea" name="idea" placeholder="Your idea (optional), e.g. “CCTV for warehouses” or “whatsapp chatbot ka post banao clinics ke liye”. Leave it empty and the agent picks a fresh topic."></textarea>
+    <div class="field-label" style="margin-top:20px">Prompt</div>
+    <textarea id="idea" name="idea" class="prompt-box" placeholder="What is the post about? The picture is made from this. e.g. “A black luxury car in front of the Burj Khalifa at night” or “CCTV for warehouses”. Leave it empty and the agent picks a fresh topic."></textarea>
+    <div class="field-label">Message on the post <span class="opt">(optional)</span></div>
+    <textarea id="message" name="message" class="message-box" rows="2" maxlength="150" placeholder="The exact words to show on the picture, e.g. “Arrive in style. Book your chauffeur today.” Leave it empty and the AI writes it from the prompt."></textarea>
     <div class="selects">
       <label>Service
         <select name="service">
@@ -155,11 +158,12 @@ document.getElementById("new-post").addEventListener("submit", async (e) => {
   btn.disabled = true;
   try {
     const p = await api("POST", "/api/posts", {
-      idea: f.get("idea") || "", template: f.get("template") || null,
+      idea: f.get("idea") || "", message: f.get("message") || "", template: f.get("template") || null,
       service: f.get("service") || null, post_type: f.get("post_type") || null, publish_at: at,
     });
     posts.unshift(p); filter = "all"; render();
     document.getElementById("idea").value = "";
+    document.getElementById("message").value = "";
     toast(at ? `Working on it. After you approve, it goes out on ${dubai(p.scheduled_for)}.` : "Working on it. Watch the card below.");
   } catch (err) { toast(err.message, true); }
   btn.disabled = false;

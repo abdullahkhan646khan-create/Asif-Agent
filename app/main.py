@@ -236,6 +236,7 @@ async def schedule_page(request: Request):
 
 class NewPost(BaseModel):
     idea: str = ""
+    message: str = ""  # exact words for the picture; empty = the AI writes them
     template: str | None = None
     service: str | None = None
     post_type: str | None = None
@@ -261,10 +262,13 @@ async def api_create(request: Request, body: NewPost):
     require_api_login(request)
     if body.idea.strip() and len(body.idea.strip()) < 3:
         raise HTTPException(400, "Write a bit more about the idea, or leave it empty for a fresh topic")
+    if len(body.message.strip()) > 150:
+        raise HTTPException(400, "Keep the message on the post short: at most 150 characters")
     template = body.template if body.template in TEMPLATES else None
     post_type = body.post_type if body.post_type in POST_TYPES else None
     when = future_time(body.publish_at)
-    return await pipeline.create(body.idea, template, body.service or None, post_type, scheduled_for=when)
+    return await pipeline.create(body.idea, template, body.service or None, post_type, scheduled_for=when,
+                                 message=body.message)
 
 
 class NewDemo(BaseModel):

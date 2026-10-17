@@ -129,7 +129,8 @@ async def generate(post_id: str) -> None:
                         brief = await make_clean_brief(brand, note_text, past, feedback, industry=industry,
                                                        scene=next_scene(prefs["industry"], made))
                     else:
-                        brief = await make_clean_brief(brand, idea, past, feedback)
+                        brief = await make_clean_brief(brand, idea, past, feedback, service=prefs.get("service"),
+                                                       message=prefs.get("message") or "")
                     post = await store.update_post(post_id, brief=brief)
                 platforms = None
                 if not demo:
@@ -150,7 +151,7 @@ async def generate(post_id: str) -> None:
                     prefs = {**prefs, "plan": plan}
                     post = await store.update_post(post_id, prefs=prefs)
                 if not post.get("brief"):
-                    brief = await make_brief(brand, idea, plan, past, feedback)
+                    brief = await make_brief(brand, idea, plan, past, feedback, message=prefs.get("message") or "")
                     post = await store.update_post(post_id, brief=brief)
                 try:  # write a caption for every platform connected in Buffer right now
                     platforms = await publisher.caption_platforms()
@@ -236,13 +237,18 @@ async def generate(post_id: str) -> None:
 
 async def create(idea: str, template_pref: str | None, service: str | None = None, post_type: str | None = None,
                  scheduled_for=None, source: str = "manual", auto_publish: bool = False,
-                 if_no_answer: str = "wait", by: str = "dashboard", industry: str | None = None) -> dict:
+                 if_no_answer: str = "wait", by: str = "dashboard", industry: str | None = None,
+                 message: str = "") -> dict:
     """Everything is optional: with no idea and everything on Auto, the planner picks a fresh topic.
     scheduled_for (UTC datetime) = when it should go out; None = right after approval."""
     brand = load_brand()
     prefs = {"service": service if service and brand.service(service) else None, "post_type": post_type or None,
              "source": source, "auto_publish": bool(auto_publish and scheduled_for), "if_no_answer": if_no_answer}
     idea = idea.strip()
+    message = (message or "").strip()[:150]
+    if message:
+        prefs["message"] = message
+        idea = idea or message  # only a message: it is also what the post and the picture are about
     if industry in INDUSTRIES:  # an industry demo: the typed text is only a note for the picture
         prefs.update(mode="demo", industry=industry, note=idea, source="demo")
         idea, template_pref, scheduled_for = f"Demo: {industry_name(industry)}", None, None
