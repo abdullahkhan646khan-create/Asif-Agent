@@ -346,3 +346,25 @@ body.auth .wrap { max-width: none; padding: 0; }
 /* legacy helpers still used by some pages */
 .chips.light span { background: #EEF2F8; color: var(--navy); border-color: var(--line); }
 .chips.light input:checked + span { background: var(--navy); color: #fff; }
+
+/* ---------- demos ---------- */
+.industries { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+.industries label { cursor: pointer; }
+.industries input { position: absolute; opacity: 0; pointer-events: none; }
+.industries span { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; height: 100%;
+  padding: 14px 8px; border-radius: 14px; font-size: 13px; font-weight: 600; color: #fff; line-height: 1.3;
+  background: rgba(255, 255, 255, .1); border: 1px solid rgba(255, 255, 255, .2); transition: background .15s, transform .12s; }
+.industries span i { font-style: normal; font-size: 26px; line-height: 1; }
+.industries label:hover span { background: rgba(255, 255, 255, .18); }
+.industries input:checked + span { background: #fff; color: var(--navy); border-color: #fff; box-shadow: 0 8px 20px -8px rgba(0, 0, 0, .45); }
+.industries input:focus-visible + span { box-shadow: 0 0 0 3px rgba(248, 208, 74, .6); }
+@media (max-width: 900px) { .industries { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .industries { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.demos { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.thumb.tall { aspect-ratio: 4 / 5; }
+.thumb.tall a { display: block; width: 100%; height: 100%; }
+.demo-industry { font-size: 11.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--purple); }
+.demo-card .row { margin-top: 4px; }
+.demo-card .btn { padding: 8px 14px; font-size: 13px; }
+.sample summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--blue); }
+.sample .caption { margin-top: 8px; font-size: 13px; max-height: 220px; overflow: auto; }

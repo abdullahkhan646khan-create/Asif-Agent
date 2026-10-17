@@ -41,6 +41,7 @@ VOCAB = ("fast secure smart cloud cable camera office warehouse clinic school ho
          "report branch mobile store sales leads speed safety storage server rack fiber copper switch router wifi "
          "desk lobby tower marina sunrise evening river desert garden bridge harbor station").split()
 counter = {"n": 0}
+prompts: list[tuple[str, str]] = []  # (system, user) of every AI call, for checking what the AI was told
 
 
 def words(rnd, k):
@@ -52,6 +53,16 @@ async def fake_ask_json(system, user, check=None, temperature=0.7):
     import random
     counter["n"] += 1
     rnd = random.Random(counter["n"])
+    prompts.append((system, user))
+    if "ON-IMAGE TEXT (short and elegant)" in system:  # clean style: typed idea or industry demo
+        data = {"service": "General", "angle": words(rnd, 8), "headline_top": words(rnd, 2).title(),
+                "headline_highlight": words(rnd, 1), "subheadline": words(rnd, 5), "image_prompt": words(rnd, 50)}
+        assert not (check(data) if check else []), check(data)
+        return data, "fake/model"
+    if "SAMPLE caption for a DEMO" in system:
+        data = {"title": words(rnd, 4).capitalize(), "facebook": words(rnd, 30).capitalize() + ". #Dubai #Luxury"}
+        assert not (check(data) if check else []), check(data)
+        return data, "fake/model"
     if "creative director" in system:
         layout = re.search(r"LAYOUT: use '(\w+)'", user).group(1)
         data = {
@@ -888,3 +899,51 @@ def test_every_buffer_channel_type_gets_its_own_post(monkeypatch):
     bad = {"title": "t", "facebook": "ok", "googlebusiness": "Call +971 55 940 8284 now #Dubai", "tiktok": "tt"}
     problems = " | ".join(check(bad))
     assert "phone number" in problems and "hashtags" in problems and "'tiktok_title' is missing" in problems
+
+
+def test_typed_idea_is_followed_in_the_clean_style(client):
+    """The client's idea decides the post: it reaches the AI as the brief, any topic, clean style."""
+    prompts.clear()
+    idea = "Luxury limo service: a black Mercedes S-Class at the Burj Khalifa at night"
+    post = client.post("/api/posts", json={"idea": idea}).json()
+    post = wait_for(client, post["id"], ["pending_review", "failed"])
+    assert post["status"] == "pending_review", post["error"]
+    assert post["brief"]["template"] == "clean" and post["brief"]["_contact"] == "full"
+    director = next((sy, u) for sy, u in prompts if "ON-IMAGE TEXT" in sy)
+    assert "THE IDEA IS THE BRIEF" in director[0] and idea in director[1]
+    assert "must follow" not in director[0] + director[1]  # no forced person/place/service any more
+    copy = next(sy for sy, u in prompts if "copywriter" in sy)
+    assert idea in copy and "Stay on that topic" in copy
+
+
+def test_idea_wins_in_the_branded_layouts_too(client):
+    prompts.clear()
+    post = client.post("/api/posts", json={"idea": "Cybersecurity for a bank head office", "template": "spotlight"}).json()
+    wait_for(client, post["id"], ["pending_review", "failed"])
+    user = next(u for sy, u in prompts if "LAYOUT: use" in u)
+    assert "THE IDEA WINS" in user and "must follow" not in user
+
+
+def test_industry_demo_is_never_emailed_or_published(client):
+    prompts.clear()
+    mails, published = len(sent), len(buffer_calls)
+    assert client.post("/api/demos", json={"industry": "nonsense"}).status_code == 400
+    demo = client.post("/api/demos", json={"industry": "limousine", "note": "a white Rolls-Royce at Atlantis"}).json()
+    demo = wait_for(client, demo["id"], ["demo_ready", "failed"])
+    assert demo["status"] == "demo_ready", demo["error"]
+    assert len(sent) == mails and len(buffer_calls) == published  # no review email, nothing posted
+    assert demo["brief"]["_industry"] == "Luxury Limousine & Chauffeur" and demo["brief"]["_contact"] == "site"
+    assert demo["id"] not in [p["id"] for p in client.get("/api/posts").json()]  # kept off the Posts page
+    assert demo["id"] in [p["id"] for p in client.get("/api/demos").json()]
+    first = next(u for sy, u in prompts if "DEMO post" in sy)
+    assert "white Rolls-Royce" in first and "SCENE for the photo" in first
+    dl = client.get(f"/demos/{demo['id']}/download")
+    assert dl.status_code == 200 and dl.headers["content-type"] == "image/jpeg" and "attachment" in dl.headers["content-disposition"]
+    assert client.get("/demos").status_code == 200
+    # the next demo for the same industry shows a different scene
+    prompts.clear()
+    again = client.post("/api/demos", json={"industry": "limousine"}).json()
+    wait_for(client, again["id"], ["demo_ready", "failed"])
+    second = next(u for sy, u in prompts if "DEMO post" in sy)
+    scene = lambda text: text.split("SCENE for the photo:", 1)[1].split("\n", 1)[0]  # noqa: E731
+    assert scene(first) != scene(second)

@@ -672,8 +672,53 @@ def tpl_frame(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
     return canvas.convert("RGB")
 
 
+def tpl_clean(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
+    """Clean style (1080×1350): one great photo, a short headline, the logo and a small contact line.
+    No fixed pattern: the text sits bottom-left or centred depending on the post."""
+    col = brand.colors
+    H = 1350
+    canvas = cover(photo, W, H, (0.5, 0.42)).convert("RGBA")
+    headline = content.get("headline_top") or ""
+    centred = sum(map(ord, headline)) % 2 == 1
+    canvas.alpha_composite(vertical_shade(canvas.size, "#05081C", [0, 200, 340, H], [150, 45, 0, 0]))
+    canvas.alpha_composite(vertical_shade(canvas.size, "#05081C", [0, 640, 960, H], [0, 0, 165, 238]))
+    paste_logo(canvas, brand.logo_white, (52, 44, 52 + 260, 44 + 62))
+
+    x, max_w = 64, W - 128
+    rows = [
+        {"text": clean(content.get("_eyebrow") or ""), "weight": 700, "max_w": max_w, "size": 22, "min": 18, "lines": 1,
+         "fill": rgb(col["accent_yellow"], 255), "shadow": 60, "gap_after": 10, "center": centred},
+        {"text": headline, "weight": 800, "max_w": max_w, "size": 66, "min": 40, "lines": 3, "fill": WHITE,
+         "shadow": 90, "line_gap": -2, "upper": False, "center": centred},
+        {"text": content.get("headline_highlight"), "weight": 800, "max_w": max_w, "size": 66, "min": 40, "lines": 2,
+         "fill": rgb(col["accent_yellow"], 255), "shadow": 90, "line_gap": -2, "upper": False, "center": centred,
+         "gap_after": 6},
+        {"text": content.get("subheadline"), "weight": 600, "max_w": max_w, "size": 28, "min": 22, "lines": 2,
+         "fill": (232, 238, 255, 255), "shadow": 80, "line_gap": 4, "upper": False, "center": centred},
+    ]
+    bottom = H - 150
+    height = text_stack(Image.new("RGBA", canvas.size), x, 0, 10_000, rows)
+    text_stack(canvas, x, max(620, bottom - height), bottom, rows)
+
+    bar = gradient((96, 5), [col["brand_cyan"], col["brand_purple"]]).convert("RGBA")
+    canvas.alpha_composite(bar, ((W - 96) // 2 if centred else x, H - 122))
+    c = brand.company
+    items = [(ICON_WEB, c["website"])] if content.get("_contact") == "site" else [(ICON_PHONE, c["phone"]), (ICON_WEB, c["website"])]
+    f, fi = font(600, 24), font("icons", 27)
+    widths = [27 + 10 + text_width(f, t) for _, t in items]
+    total = sum(widths) + 36 * (len(items) - 1)
+    cx, cy = ((W - total) / 2 if centred else x), H - 70
+    d = ImageDraw.Draw(canvas)
+    for (icon, label), w in zip(items, widths):
+        d.text((cx, cy), icon, font=fi, fill=rgb(col["accent_yellow"], 255), anchor="lm")
+        d.text((cx + 37, cy), label, font=f, fill=(235, 240, 255, 255), anchor="lm")
+        cx += w + 36
+    return canvas.convert("RGB")
+
+
 RENDERERS = {"wave": tpl_wave, "spotlight": tpl_spotlight, "skyline": tpl_skyline,
-             "split": tpl_split, "cards": tpl_cards, "frame": tpl_frame}
+             "split": tpl_split, "cards": tpl_cards, "frame": tpl_frame,
+             "clean": tpl_clean}  # clean is for typed ideas and demos, never picked by the Auto planner
 
 
 def thumbnail(jpeg_bytes: bytes, width: int = 480) -> bytes:

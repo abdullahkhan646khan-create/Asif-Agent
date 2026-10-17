@@ -17,10 +17,11 @@ from . import emailer, publisher
 from .brand import load_brand
 from .composer import compose, thumbnail
 from .imagegen import pool
+from .industries import INDUSTRIES, industry_name, next_scene
 from .store import get_store
 from .timeutil import fmt, iso, now_utc, parse
 from .variety import fingerprint, looks_like_earlier, make_plan, plan_label
-from .writer import image_prompt, make_brief, make_copy
+from .writer import image_prompt, make_brief, make_clean_brief, make_copy
 
 log = logging.getLogger("pipeline")
 
@@ -33,6 +34,7 @@ STAGE_LABEL = {
     "queued": "Waiting to start", "writing": "Writing headline and captions", "imaging": "Creating the image with Gemini",
     "designing": "Adding logo, headline and contact details", "emailing": "Sending the review email",
     "pending_review": "Waiting for your approval", "publishing": "Publishing through Buffer",
+    "demo_ready": "Demo ready · preview and download only, never published",
 }
 LATE_LIMIT = timedelta(hours=3)  # a scheduled post more than this late is not published by itself
 
@@ -111,6 +113,33 @@ async def generate(post_id: str) -> None:
             past = await variety_history(post_id)
             prefs = post.get("prefs") or {}
             idea = "" if post["idea"].startswith("Auto: ") else post["idea"]
+            mode = prefs.get("mode") or ("idea" if idea else "auto")
+            demo = INDUSTRIES.get(prefs.get("industry")) and mode == "demo"
+            # typed ideas (with Auto layout) and industry demos use the clean style; Auto and schedule keep the layouts
+            clean = bool(demo) or (mode == "idea" and not post.get("template_pref"))
+
+            if clean and (not post.get("brief") or not post.get("captions")):
+                stage = "writing"
+                post = await _stage(post_id, stage)
+                note_text = prefs.get("note") or ""
+                industry = industry_name(prefs["industry"]) if demo else None
+                if not post.get("brief"):
+                    if demo:
+                        made = sum(1 for h in past if (h.get("brief") or {}).get("_industry") == industry)
+                        brief = await make_clean_brief(brand, note_text, past, feedback, industry=industry,
+                                                       scene=next_scene(prefs["industry"], made))
+                    else:
+                        brief = await make_clean_brief(brand, idea, past, feedback)
+                    post = await store.update_post(post_id, brief=brief)
+                platforms = None
+                if not demo:
+                    try:  # a caption for every platform connected in Buffer right now
+                        platforms = await publisher.caption_platforms()
+                    except Exception as e:
+                        log.warning("Could not read the Buffer channels (%s); using POST_PLATFORMS", e)
+                captions = await make_copy(brand, idea or note_text, post["brief"], {}, past, feedback, platforms,
+                                           mode="demo" if demo else "idea", industry=industry)
+                post = await store.update_post(post_id, captions=captions)
 
             if not post.get("brief") or not post.get("captions"):
                 stage = "writing"
@@ -161,6 +190,11 @@ async def generate(post_id: str) -> None:
                 post = await store.update_post(post_id, final_image_path=path, final_image_url=url,
                                                brief={**post["brief"], "_thumb": thumb_url})
 
+            if demo:  # demos are only for showing prospects: no email, never published
+                await store.claim(post_id, WORKING, "demo_ready", stage_note=STAGE_LABEL["demo_ready"], error=None)
+                await note(post_id, "Demo ready: preview and download only, never published")
+                return
+
             stage = "emailing"
             post = await _stage(post_id, stage)
             image = await store.read_file(post["final_image_path"])
@@ -202,19 +236,25 @@ async def generate(post_id: str) -> None:
 
 async def create(idea: str, template_pref: str | None, service: str | None = None, post_type: str | None = None,
                  scheduled_for=None, source: str = "manual", auto_publish: bool = False,
-                 if_no_answer: str = "wait", by: str = "dashboard") -> dict:
+                 if_no_answer: str = "wait", by: str = "dashboard", industry: str | None = None) -> dict:
     """Everything is optional: with no idea and everything on Auto, the planner picks a fresh topic.
     scheduled_for (UTC datetime) = when it should go out; None = right after approval."""
     brand = load_brand()
     prefs = {"service": service if service and brand.service(service) else None, "post_type": post_type or None,
              "source": source, "auto_publish": bool(auto_publish and scheduled_for), "if_no_answer": if_no_answer}
     idea = idea.strip()
+    if industry in INDUSTRIES:  # an industry demo: the typed text is only a note for the picture
+        prefs.update(mode="demo", industry=industry, note=idea, source="demo")
+        idea, template_pref, scheduled_for = f"Demo: {industry_name(industry)}", None, None
+    else:
+        prefs["mode"] = "idea" if idea else "auto"
     store = get_store()
     post = await store.create_post(idea, template_pref or None, prefs, iso(scheduled_for) if scheduled_for else None)
     if not idea:
         plan = make_plan(await variety_history(post["id"]), prefs["service"], prefs["post_type"], template_pref, brand)
         post = await store.update_post(post["id"], idea=f"Auto: {plan_label(plan)}", prefs={**prefs, "plan": plan})
     what = "Created by the daily schedule" if source == "schedule" else (
+        f"Industry demo: {industry_name(industry)}" if prefs.get("mode") == "demo" else
         f"Created from the idea “{idea}”" if idea else "Created with an Auto topic")
     if scheduled_for:
         what += f" · to go out {fmt(scheduled_for)}" + (" automatically" if prefs["auto_publish"] else "")

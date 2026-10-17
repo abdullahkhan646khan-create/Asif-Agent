@@ -4,7 +4,7 @@ const STATUS = {
   designing: ["Designing", "work"], emailing: ["Emailing", "work"], publishing: ["Publishing", "work"],
   pending_review: ["Waiting for approval", "wait"], scheduled: ["Scheduled", "sched"], published: ["Published", "ok"],
   partly_published: ["Partly published", "bad"], publish_failed: ["Publish failed", "bad"], failed: ["Failed", "bad"],
-  missed: ["Missed its time", "bad"], cancelled: ["Cancelled", ""],
+  missed: ["Missed its time", "bad"], cancelled: ["Cancelled", ""], demo_ready: ["Demo ready", "ok"],
 };
 const FILTERS = {
   all: () => true,

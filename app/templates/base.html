@@ -22,6 +22,7 @@
     <nav>
       <a href="/" class="{{ 'on' if request.url.path == '/' }}">{{ icon("grid", 17) }}<b>Posts</b></a>
       <a href="/schedule" class="{{ 'on' if request.url.path == '/schedule' }}">{{ icon("calendar", 17) }}<b>Schedule</b></a>
+      <a href="/demos" class="{{ 'on' if request.url.path == '/demos' }}">{{ icon("image", 17) }}<b>Demos</b></a>
     </nav>
     <div class="top-right">
       {% if now_dubai %}<span class="top-time" title="Dubai time">{{ icon("clock", 15) }}{{ now_dubai }}</span>{% endif %}

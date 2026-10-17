@@ -1,12 +1,13 @@
 import asyncio
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
 import httpx
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -17,6 +18,7 @@ from .brand import load_brand
 from .composer import TEMPLATES
 from .config import ROOT, get_settings
 from .imagegen import pool
+from .industries import INDUSTRIES
 from .security import check_password, check_review_token
 from .store import StoreError, get_store
 from .timeutil import fmt, from_local_input, iso, now_utc, parse, to_local_input
@@ -185,7 +187,7 @@ async def logout(request: Request):
 async def home(request: Request):
     if not logged_in(request):
         return RedirectResponse("/login", status_code=303)
-    return page(request, "index.html", posts=await get_store().list_posts(60), layouts=TEMPLATES,
+    return page(request, "index.html", posts=real_posts(await get_store().list_posts(60)), layouts=TEMPLATES,
                 post_types=POST_TYPES, min_time=to_local_input(now_utc() + timedelta(minutes=5)))
 
 
@@ -203,6 +205,23 @@ async def post_page(request: Request, post_id: str):
                 can=dict(reject=post["status"] in pipeline.CAN_REJECT, cancel=post["status"] in pipeline.CAN_CANCEL,
                          publish_now=post["status"] in pipeline.CAN_PUBLISH_NOW,
                          reschedule=post["status"] in pipeline.CAN_RESCHEDULE))
+
+
+def is_demo(post: dict) -> bool:
+    return (post.get("prefs") or {}).get("mode") == "demo"
+
+
+def real_posts(posts: list[dict]) -> list[dict]:
+    """Posts for the Posts page: industry demos live on their own page."""
+    return [p for p in posts if not is_demo(p)]
+
+
+@app.get("/demos", response_class=HTMLResponse)
+async def demos_page(request: Request):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=303)
+    demos = [p for p in await get_store().list_posts(300) if is_demo(p)][:60]
+    return page(request, "demos.html", demos=demos, industries=INDUSTRIES)
 
 
 @app.get("/schedule", response_class=HTMLResponse)
@@ -234,7 +253,7 @@ class NewTime(BaseModel):
 @app.get("/api/posts")
 async def api_posts(request: Request, limit: int = 60):
     require_api_login(request)
-    return await get_store().list_posts(max(1, min(limit, 500)))
+    return real_posts(await get_store().list_posts(max(1, min(limit, 500))))
 
 
 @app.post("/api/posts")
@@ -246,6 +265,39 @@ async def api_create(request: Request, body: NewPost):
     post_type = body.post_type if body.post_type in POST_TYPES else None
     when = future_time(body.publish_at)
     return await pipeline.create(body.idea, template, body.service or None, post_type, scheduled_for=when)
+
+
+class NewDemo(BaseModel):
+    industry: str
+    note: str = ""
+
+
+@app.get("/api/demos")
+async def api_demos(request: Request):
+    require_api_login(request)
+    return [p for p in await get_store().list_posts(300) if is_demo(p)][:60]
+
+
+@app.post("/api/demos")
+async def api_demo_create(request: Request, body: NewDemo):
+    """An industry demo: made like a post, shown on the Demos page, never emailed or published."""
+    require_api_login(request)
+    if body.industry not in INDUSTRIES:
+        raise HTTPException(400, "Pick an industry")
+    return await pipeline.create(body.note[:500], None, industry=body.industry, by="dashboard")
+
+
+@app.get("/demos/{post_id}/download")
+async def demo_download(request: Request, post_id: str):
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=303)
+    post = await get_store().get_post(post_id)
+    if not post or not post.get("final_image_path"):
+        raise HTTPException(404)
+    data = await get_store().read_file(post["final_image_path"])
+    name = re.sub(r"[^a-z0-9]+", "-", ((post.get("brief") or {}).get("_industry") or "post").lower()).strip("-")
+    return Response(data, media_type="image/jpeg",
+                    headers={"Content-Disposition": f'attachment; filename="amanasoft-demo-{name}-{post_id[:6]}.jpg"'})
 
 
 @app.get("/api/posts/{post_id}")

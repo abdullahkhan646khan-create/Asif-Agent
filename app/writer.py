@@ -116,15 +116,22 @@ def _director_user(idea: str, plan: dict, history: list[dict], feedback: dict | 
         service = f"the one the idea is about; only if the idea is general, use {plan['service']}"
     parts.append(
         f"SERVICE: {service}"
-        + f"\nPOST TYPE: {POST_TYPES[plan['post_type']]}"
-        + f"\nAUDIENCE FOCUS: {plan['industry']} (use it when it fits the idea)"
+        + f"\nPOST TYPE: {POST_TYPES[plan['post_type']]}" + (" (only if it fits the idea)" if idea else "")
+        + f"\nAUDIENCE FOCUS: {plan['industry']} (use it only if the idea does not name an audience)"
         + f"\nLAYOUT: use '{plan['template']}'."
     )
     place = "Dubai at night under a starry sky" if plan["template"] == "skyline" else plan["setting"]
-    parts.append(
-        "VISUAL DIRECTION for image_prompt (must follow; adapt it naturally to the service):\n"
-        f"- who: {plan['person']}\n- where: {place}\n- camera: {plan['shot']}\n- light: {plan['light']}"
-    )
+    if idea:  # the client's idea decides the picture; the plan only fills what the idea leaves open
+        parts.append(
+            "THE IDEA WINS: the headline, the picture and the people must match the idea exactly. Use these only for "
+            "what the idea does not say:\n"
+            f"- who: {plan['person']}\n- where: {place}\n- camera: {plan['shot']}\n- light: {plan['light']}"
+        )
+    else:
+        parts.append(
+            "VISUAL DIRECTION for image_prompt (must follow; adapt it naturally to the service):\n"
+            f"- who: {plan['person']}\n- where: {place}\n- camera: {plan['shot']}\n- light: {plan['light']}"
+        )
     recent = [h["brief"] for h in history[:15] if h.get("brief")]
     if recent:
         lines = [f"- [{b.get('template', '?')}] {b.get('service', '?')}: {b.get('headline_top', '')} "
@@ -259,8 +266,103 @@ async def make_brief(brand: Brand, idea: str, plan: dict, history: list[dict],
     return brief
 
 
+CLEAN_LIMITS = {"headline_top": 40, "headline_highlight": 24, "subheadline": 72}
+CLEAN_STYLE = ("ultra-realistic premium commercial photography, natural cinematic light, rich true-to-life colours, "
+               "sharp focus, shallow depth of field")
+CLEAN_COMPOSITION = ("portrait 4:5 frame; the main subject is clear and beautifully framed; the lower third is calmer "
+                     "(floor, road, table, water or a soft background) because a short headline sits there")
+
+
+def _clean_system(brand: Brand, industry: str | None) -> str:
+    services = ", ".join(brand.service_names)
+    if industry:
+        who = (f"You are a senior creative director making a DEMO post for a prospective client in the {industry} "
+               f"industry. It shows them what their social media could look like. The post promotes a typical premium "
+               f"{industry} business in Dubai (never a real company or brand name).")
+        service_rule = 'service: always "General".'
+    else:
+        who = (f"You are the senior creative director for {brand.name}'s social media. Turn the client's idea into ONE "
+               "premium post: a stunning photo with a short text on it.\nTHE IDEA IS THE BRIEF. Follow it exactly: its "
+               "subject, scene, objects, people, place and mood. Never change the topic or swap in something else. If "
+               "the idea is a detailed image description, keep every detail of it in image_prompt.")
+        service_rule = f'service: if the idea is about one of these services use its exact name, otherwise "General": {services}.'
+    return f"""{who}
+
+ON-IMAGE TEXT (short and elegant):
+- headline_top: the main message, 2-6 words, max {CLEAN_LIMITS['headline_top']} characters.
+- headline_highlight: 1-3 words shown in an accent colour right after it; may be "".
+- subheadline: one short supporting line, max {CLEAN_LIMITS['subheadline']} characters; may be "".
+- No calls to action, prices, phone numbers, websites or invented facts (no numbers, awards or guarantees).
+- Natural, grammatical English.
+
+image_prompt: 70-140 words describing an ultra-realistic premium commercial photograph: subject, setting (Dubai/UAE
+when it fits), composition (portrait 4:5, the main subject clear, the lower third calmer for the text), light and mood.
+Never ask for text, logos, brand badges, signs, flags or watermarks.
+{service_rule}
+
+Reply with ONLY this JSON object:
+{{"service": "...", "angle": "<one sentence: what the post shows and why it appeals>", "headline_top": "...",
+  "headline_highlight": "...", "subheadline": "...", "image_prompt": "..."}}"""
+
+
+def _check_clean(brand: Brand):
+    def check(d: dict) -> list[str]:
+        p = []
+        for k in ("headline_top", "image_prompt"):
+            if not str(d.get(k) or "").strip():
+                p.append(f"'{k}' is missing")
+        for k, limit in CLEAN_LIMITS.items():
+            if len(str(d.get(k) or "")) > limit:
+                p.append(f"'{k}' is {len(str(d[k]))} characters; rewrite it shorter (max {limit})")
+        if len(str(d.get("image_prompt") or "").split()) < 40:
+            p.append("image_prompt is too short; write 70-140 words")
+        claims = unsupported_claims([d.get(k) for k in ("headline_top", "headline_highlight", "subheadline")])
+        if claims:
+            p.append(f"remove unsupported claims {claims}: no guarantees, awards or invented numbers")
+        return p
+    return check
+
+
+async def make_clean_brief(brand: Brand, idea: str, history: list[dict], feedback: dict | None = None,
+                           industry: str | None = None, scene: str | None = None) -> dict:
+    """Brief for the clean style: a typed idea (followed exactly) or an industry demo."""
+    if industry:
+        user = f"INDUSTRY: {industry}\nSCENE for the photo: {scene}" + (f"\nCLIENT NOTE (follow it): {idea}" if idea else "")
+    else:
+        user = f"IDEA: {idea}"
+    recent = [h["brief"] for h in history[:12] if h.get("brief")]
+    if recent:
+        user += "\n\nRECENT HEADLINES - write a different one:\n" + "\n".join(
+            f"- {b.get('headline_top', '')} {b.get('headline_highlight', '')}" for b in recent)
+    if feedback:
+        user += (f"\n\nTHE PREVIOUS VERSION WAS REJECTED. Make a clearly different version (same idea).\n"
+                 f"Reason given: {feedback.get('reason') or '(no reason given)'}")
+    check = _check_clean(brand)
+    data, used = await ask_json(_clean_system(brand, industry), user, check, temperature=0.85)
+    svc = data.get("service")
+    brief = {
+        "template": "clean", "service": svc if svc and brand.service(svc) else "General",
+        "angle": str(data.get("angle") or "").strip(), "benefits": [],
+        **{k: _trim(data.get(k), limit) for k, limit in CLEAN_LIMITS.items()},
+        "image_prompt": str(data.get("image_prompt") or "").strip(), "_model": used,
+    }
+    if industry:
+        brief.update(_eyebrow=industry, _contact="site", _industry=industry)
+    else:
+        brief["_contact"] = "full"
+    return brief
+
+
 def image_prompt(brand: Brand, brief: dict) -> str:
     v = brand.profile["visual"]
+    if brief["template"] == "clean":
+        avoid = ", ".join(v["avoid_in_images"])
+        return (
+            f"Generate a photo. {brief['image_prompt'].strip()}\n\n"
+            f"Style: {CLEAN_STYLE}.\nComposition: {CLEAN_COMPOSITION}.\nFormat: portrait 4:5, high resolution.\n"
+            f"Strictly avoid: {avoid}. The image must contain absolutely NO text, letters, numbers, words, logos, "
+            "labels, signs, flags or watermarks anywhere. Create the image now, do not ask questions."
+        )
     composition = LAYOUTS[brief["template"]].split("Photo composition:")[1].strip()
     avoid = ", ".join(v["avoid_in_images"])
     shape = "portrait 4:5" if brief["template"] == "skyline" else "square 1:1"
@@ -327,8 +429,19 @@ def _copy_keys(platforms: list[str]) -> list[str]:
     return ["title", *platforms] + [EXTRA_FIELDS[p] for p in platforms if p in EXTRA_FIELDS]
 
 
-def _copy_system(brand: Brand, service: str | None = None, platforms: list[str] | None = None) -> str:
+def _copy_system(brand: Brand, service: str | None = None, platforms: list[str] | None = None,
+                 mode: str = "brand", topic: str = "", industry: str | None = None) -> str:
     platforms = platforms or get_settings().post_platform_list
+    if mode == "demo":
+        return f"""You write ONE sample caption for a DEMO post: a typical premium {industry} business in Dubai (never a
+real company or brand name). It shows a prospect what their social media could look like.
+- facebook: 50-110 words, a hook in the first line, short paragraphs, warm and premium, ends with an invitation to
+  book or visit. No phone numbers, emails or websites. Last line: 4-6 hashtags for {industry} in Dubai.
+- title: short internal title, max 60 characters.
+- Never invent prices, discounts, awards or numbers.
+
+Reply with ONLY this JSON object:
+{{"title": "...", "facebook": "..."}}"""
     tags = brand.profile["hashtags"]
     pool = "; ".join(f"{k}: {' '.join(v)}" for k, v in tags["by_category"].items())
     rules = _platform_rules(brand)
@@ -340,11 +453,19 @@ def _copy_system(brand: Brand, service: str | None = None, platforms: list[str] 
     if "pinterest" in platforms:
         lines += "\n- pinterest_title: a clear, searchable Pin title, max 90 characters, no hashtags."
     spec = ", ".join(f'"{k}": "..."' for k in _copy_keys(platforms))
-    return f"""You are the social media copywriter for {brand.name}. Write the captions for ONE post from a creative brief.
+    if mode == "idea":
+        c = brand.company
+        intro = (f"You are the social media copywriter for {brand.name} ({c['type']}). Write the captions for ONE post "
+                 f"about exactly this topic, the client's own idea: {topic}\nStay on that topic; do not turn it into a "
+                 f"different subject or a list of {brand.name} services.")
+        kit = f"CONTACT DETAILS (use exactly): 📞 {c['phone']} · 🌐 {c['website']} · ✉️ {c['email']}"
+    else:
+        intro = f"You are the social media copywriter for {brand.name}. Write the captions for ONE post from a creative brief."
+        kit = f"BRAND KIT\n{brand.context_text(all_services=False, focus=service)}"
+    return f"""{intro}
 Each platform gets its own caption, written in that platform's style (not the same text copied).
 
-BRAND KIT
-{brand.context_text(all_services=False, focus=service)}
+{kit}
 
 PLATFORM RULES
 {lines}
@@ -424,10 +545,12 @@ def _fit_x(text: str) -> str:
 
 
 async def make_copy(brand: Brand, idea: str, brief: dict, plan: dict, history: list[dict],
-                    feedback: dict | None = None, platforms: list[str] | None = None) -> dict:
+                    feedback: dict | None = None, platforms: list[str] | None = None, mode: str = "brand",
+                    industry: str | None = None) -> dict:
     public_brief = {k: v for k, v in brief.items() if not k.startswith("_") and k != "image_prompt"}
     user = f"IDEA: {idea or '(none, use the brief)'}\n\nCREATIVE BRIEF: {json.dumps(public_brief, ensure_ascii=False)}"
-    user += f"\n\nCAPTION STYLE for this post: {plan['caption_style']}."
+    if plan.get("caption_style"):
+        user += f"\n\nCAPTION STYLE for this post: {plan['caption_style']}."
     openings = [o for o in recent_openings(history) if o]
     if openings:
         user += "\nDo NOT start the Facebook caption like any of these recent openings:\n- " + "\n- ".join(openings)
@@ -437,12 +560,12 @@ async def make_copy(brand: Brand, idea: str, brief: dict, plan: dict, history: l
     if feedback and feedback.get("reason"):
         user += f"\n\nThe previous version was rejected. Reason: {feedback['reason']}. Write clearly different captions."
 
-    platforms = list(dict.fromkeys(["facebook", *(platforms or get_settings().post_platform_list)]))
+    platforms = ["facebook"] if mode == "demo" else list(dict.fromkeys(["facebook", *(platforms or get_settings().post_platform_list)]))
     base_check = _check_copy(brand, platforms)
     data, used, problems = {}, "", []
     for round_no in range(3):
         extra = ("\n\nYOUR LAST TRY REPEATED EARLIER POSTS:\n- " + "\n- ".join(problems)) if problems else ""
-        data, used = await ask_json(_copy_system(brand, brief.get("service"), platforms), user + extra,
+        data, used = await ask_json(_copy_system(brand, brief.get("service"), platforms, mode, idea, industry), user + extra,
                                     lambda d: base_check(d) or captions_repeat(d, history),
                                     temperature=0.75 + 0.05 * round_no)
         problems = captions_repeat(data, history)
