@@ -268,7 +268,7 @@ async def api_create(request: Request, body: NewPost):
 
 
 class NewDemo(BaseModel):
-    industry: str
+    industry: str = ""  # empty or "auto" = the industry with the fewest demos so far
     note: str = ""
 
 
@@ -282,9 +282,13 @@ async def api_demos(request: Request):
 async def api_demo_create(request: Request, body: NewDemo):
     """An industry demo: made like a post, shown on the Demos page, never emailed or published."""
     require_api_login(request)
-    if body.industry not in INDUSTRIES:
-        raise HTTPException(400, "Pick an industry")
-    return await pipeline.create(body.note[:500], None, industry=body.industry, by="dashboard")
+    industry = body.industry.strip().lower()
+    if industry in ("", "auto"):
+        made = [(p.get("prefs") or {}).get("industry") for p in await get_store().list_posts(300) if is_demo(p)]
+        industry = min(INDUSTRIES, key=lambda k: (made.count(k), list(INDUSTRIES).index(k)))
+    if industry not in INDUSTRIES:
+        raise HTTPException(400, "Pick an industry from the list, or Auto")
+    return await pipeline.create(body.note[:500], None, industry=industry, by="dashboard")
 
 
 @app.get("/demos/{post_id}/download")

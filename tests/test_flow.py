@@ -947,3 +947,16 @@ def test_industry_demo_is_never_emailed_or_published(client):
     second = next(u for sy, u in prompts if "DEMO post" in sy)
     scene = lambda text: text.split("SCENE for the photo:", 1)[1].split("\n", 1)[0]  # noqa: E731
     assert scene(first) != scene(second)
+
+
+def test_demo_industry_auto_picks_the_least_used(client):
+    """Auto (the default in the list) picks the industry with the fewest demos, so demos rotate by themselves."""
+    from app.industries import INDUSTRIES
+    made = [(p.get("prefs") or {}).get("industry") for p in client.get("/api/demos").json()]
+    demo = client.post("/api/demos", json={"industry": "", "note": ""}).json()
+    picked = demo["prefs"]["industry"]
+    assert picked in INDUSTRIES and made.count(picked) == min(made.count(k) for k in INDUSTRIES)
+    assert picked != "limousine"  # limousine already has demos from the earlier test
+    wait_for(client, demo["id"], ["demo_ready", "failed"])
+    page = client.get("/demos").text
+    assert 'id="industry"' in page and "Auto (a different industry each time)" in page

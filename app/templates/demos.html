@@ -12,11 +12,13 @@
     </div>
   </div>
   <form id="new-demo">
-    <div class="field-label" style="margin-top:20px">Industry</div>
-    <div class="industries" role="radiogroup" aria-label="Industry">
-      {% for key, (name, emoji, scenes) in industries.items() %}
-      <label><input type="radio" name="industry" value="{{ key }}" {{ "checked" if loop.first }}><span><i>{{ emoji }}</i>{{ name }}</span></label>
-      {% endfor %}
+    <div class="selects one" style="margin-top:20px">
+      <label>Industry
+        <select name="industry" id="industry">
+          <option value="">Auto (a different industry each time)</option>
+          {% for key, (name, emoji, scenes) in industries.items() %}<option value="{{ key }}">{{ emoji }} {{ name }}</option>{% endfor %}
+        </select>
+      </label>
     </div>
     <textarea id="note" name="note" maxlength="500" placeholder="Anything specific? (optional) e.g. “a white Rolls-Royce at Atlantis The Palm”"></textarea>
     <div class="foot">
@@ -92,7 +94,7 @@ document.getElementById("new-demo").addEventListener("submit", async (e) => {
     const p = await api("POST", "/api/demos", { industry: f.get("industry"), note: f.get("note") || "" });
     demos.unshift(p); render();
     document.getElementById("note").value = "";
-    toast("Making the demo. It appears below in about a minute.");
+    toast(`Making a ${(p.brief && p.brief._industry) || p.idea.replace("Demo: ", "")} demo. It appears below in about a minute.`);
     setTimeout(poll, 3000);
   } catch (err) { toast(err.message, true); }
   btn.disabled = false;
