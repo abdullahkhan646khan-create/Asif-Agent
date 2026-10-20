@@ -93,5 +93,5 @@
 
 {% block scripts %}
 <script>const RULES = {{ rules|tojson }}; const CHANNELS_KNOWN = {{ channels_known|tojson }};</script>
-<script src="/static/upload.js"></script>
+<script src="{{ static_url('upload.js') }}"></script>
 {% endblock %}

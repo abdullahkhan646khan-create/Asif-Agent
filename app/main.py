@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -72,9 +73,33 @@ async def lifespan(app: FastAPI):
         t.cancel()
 
 
+class Static(StaticFiles):
+    """Pages ask for /static/app.css?v=<content hash>, so after an update the browser loads the new file at once
+    (it never keeps using an old copy). Those addresses can be kept; anything else is checked every time."""
+
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        versioned = b"v=" in (scope.get("query_string") or b"")
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable" if versioned else "no-cache"
+        return resp
+
+
+_static_versions: dict[str, str] = {}
+
+
+def static_url(name: str) -> str:
+    """/static/<name>?v=<first 10 characters of its content hash>."""
+    if name not in _static_versions:
+        try:
+            _static_versions[name] = hashlib.md5((APP_DIR / "static" / name).read_bytes()).hexdigest()[:10]
+        except OSError:
+            _static_versions[name] = "0"
+    return f"/static/{name}?v={_static_versions[name]}"
+
+
 app = FastAPI(title="Post Agent", lifespan=lifespan, docs_url=None, redoc_url=None)
 app.add_middleware(SessionMiddleware, secret_key=settings.app_secret, max_age=60 * 60 * 24 * 30, same_site="lax")
-app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
+app.mount("/static", Static(directory=APP_DIR / "static"), name="static")
 app.mount("/brand-assets", StaticFiles(directory=load_brand().folder), name="brand")
 if not settings.use_supabase:
     (settings.data_dir / "media").mkdir(parents=True, exist_ok=True)
@@ -114,6 +139,7 @@ templates.env.filters["ago"] = _ago
 templates.env.filters["dubai"] = fmt
 templates.env.filters["dubai_time"] = lambda v: fmt(v, date=False)
 templates.env.filters["local_input"] = to_local_input
+templates.env.globals["static_url"] = static_url
 templates.env.filters["media_label"] = uploads.media_label
 templates.env.filters["clock"] = uploads.clock
 

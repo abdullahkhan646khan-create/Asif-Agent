@@ -1305,3 +1305,18 @@ def test_prompt_assistant_writes_ready_options(client, monkeypatch):
     monkeypatch.setattr(assistant, "ask_json", down)
     busy = client.post("/api/assistant", json={"messages": [{"role": "user", "content": "hi"}]})
     assert busy.status_code == 503 and "try again" in busy.json()["detail"]
+
+
+def test_browsers_always_get_the_new_style_and_scripts_after_an_update(client):
+    """The page links /static/app.css?v=<content hash>: an updated file gets a new address, so no browser keeps
+    an old copy (an old copy showed the new pages unstyled and hid the assistant)."""
+    import hashlib
+    page = client.get("/").text
+    for name in ("app.css", "app.js", "assistant.js"):
+        v = hashlib.md5((ROOT / "app" / "static" / name).read_bytes()).hexdigest()[:10]
+        assert f"/static/{name}?v={v}" in page, name
+    assert "/static/upload.js?v=" in client.get("/upload").text
+    assert "/static/app.css?v=" in client.get("/login").text
+    versioned = client.get(re.search(r'href="(/static/app\.css\?v=\w+)"', page).group(1))
+    assert versioned.status_code == 200 and "immutable" in versioned.headers["cache-control"] and ".ai-fab" in versioned.text
+    assert client.get("/static/app.css").headers["cache-control"] == "no-cache"  # an old page's plain address: always checked

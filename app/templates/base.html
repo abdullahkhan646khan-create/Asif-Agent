@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Montserrat:wght@700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="{{ static_url('app.css') }}">
 </head>
 <body class="{% block body_class %}{% endblock %}">
 {% if request.session.get('auth') %}
@@ -72,8 +72,8 @@
   </section>
 </div>
 {% endif %}
-<script src="/static/app.js"></script>
-{% if request.session.get('auth') %}<script src="/static/assistant.js"></script>{% endif %}
+<script src="{{ static_url('app.js') }}"></script>
+{% if request.session.get('auth') %}<script src="{{ static_url('assistant.js') }}"></script>{% endif %}
 {% block scripts %}{% endblock %}
 </body>
 </html>
