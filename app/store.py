@@ -8,6 +8,7 @@ test on your own machine.
 
 import asyncio
 import json
+import mimetypes
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -163,6 +164,29 @@ class LocalStore:
     async def read_file(self, path: str) -> bytes:
         return await asyncio.to_thread((self.media_dir / path).read_bytes)
 
+    def public_url(self, path: str) -> str:
+        return f"{self.base_url}/media/{path}"
+
+    async def file_info(self, path: str) -> dict | None:
+        """{"size", "content_type"} of a stored file, or None if it isn't there."""
+        p = self.media_dir / path
+        if not p.is_file():
+            return None
+        return {"size": p.stat().st_size, "content_type": mimetypes.guess_type(p.name)[0]}
+
+    async def read_head(self, path: str, n: int = 64) -> bytes:
+        def fn():
+            with open(self.media_dir / path, "rb") as f:
+                return f.read(n)
+        return await asyncio.to_thread(fn)
+
+    async def delete_file(self, path: str) -> None:
+        await asyncio.to_thread((self.media_dir / path).unlink, True)
+
+    async def upload_target(self, path: str, content_type: str) -> dict:
+        """Where the browser sends a big file (a video) itself. Locally: the app's own upload address."""
+        return {"url": f"/api/uploads/local/{path}", "method": "PUT", "headers": {"Content-Type": content_type}}
+
     async def ping(self) -> bool:
         await self.get_setting("ping")
         return True
@@ -247,13 +271,41 @@ class SupabaseStore:
         )
         if r.status_code >= 400:
             raise StoreError(f"Supabase upload failed ({r.status_code}): {r.text[:300]}")
-        return f"{self.url}/storage/v1/object/public/{self.bucket}/{path}"
+        return self.public_url(path)
 
     async def read_file(self, path: str) -> bytes:
         r = await self.client.get(f"/storage/v1/object/{self.bucket}/{path}")
         if r.status_code >= 400:
             raise StoreError(f"Supabase download failed ({r.status_code}): {r.text[:300]}")
         return r.content
+
+    def public_url(self, path: str) -> str:
+        return f"{self.url}/storage/v1/object/public/{self.bucket}/{path}"
+
+    async def file_info(self, path: str) -> dict | None:
+        r = await self.client.get(f"/storage/v1/object/info/{self.bucket}/{path}")
+        if r.status_code >= 400:
+            return None
+        d = r.json()
+        return {"size": d.get("size"), "content_type": d.get("content_type") or d.get("contentType")}
+
+    async def read_head(self, path: str, n: int = 64) -> bytes:
+        r = await self.client.get(f"/storage/v1/object/{self.bucket}/{path}", headers={"Range": f"bytes=0-{n - 1}"})
+        if r.status_code >= 400:
+            raise StoreError(f"Supabase download failed ({r.status_code}): {r.text[:300]}")
+        return r.content[:n]
+
+    async def delete_file(self, path: str) -> None:
+        r = await self.client.request("DELETE", f"/storage/v1/object/{self.bucket}", json={"prefixes": [path]})
+        if r.status_code >= 400:
+            raise StoreError(f"Supabase delete failed ({r.status_code}): {r.text[:300]}")
+
+    async def upload_target(self, path: str, content_type: str) -> dict:
+        """A one-time upload link, so the browser sends a big video straight to storage (not through the server)."""
+        r = await self.client.post(f"/storage/v1/object/upload/sign/{self.bucket}/{path}", json={})
+        if r.status_code >= 400:
+            raise StoreError(f"Supabase upload link failed ({r.status_code}): {r.text[:300]}")
+        return {"url": f"{self.url}/storage/v1{r.json()['url']}", "method": "PUT", "headers": {"Content-Type": content_type}}
 
     async def ping(self) -> bool:
         await self._rest("GET", "settings", params={"select": "key", "limit": "1"})

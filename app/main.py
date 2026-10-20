@@ -13,12 +13,13 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import emailer, pipeline, publisher, scheduler
+from . import assistant, emailer, pipeline, publisher, scheduler, uploads
 from .brand import load_brand
 from .composer import TEMPLATES
 from .config import ROOT, get_settings
 from .imagegen import pool
 from .industries import INDUSTRIES
+from .llm import LLMError
 from .security import check_password, check_review_token
 from .store import StoreError, get_store
 from .timeutil import fmt, from_local_input, iso, now_utc, parse, to_local_input
@@ -113,6 +114,8 @@ templates.env.filters["ago"] = _ago
 templates.env.filters["dubai"] = fmt
 templates.env.filters["dubai_time"] = lambda v: fmt(v, date=False)
 templates.env.filters["local_input"] = to_local_input
+templates.env.filters["media_label"] = uploads.media_label
+templates.env.filters["clock"] = uploads.clock
 
 
 def page(request: Request, name: str, **ctx) -> HTMLResponse:
@@ -224,6 +227,20 @@ async def demos_page(request: Request):
     return page(request, "demos.html", demos=demos, industries=INDUSTRIES)
 
 
+@app.get("/upload", response_class=HTMLResponse)
+async def upload_page(request: Request):
+    """Post the client's own photo, carousel or video: the AI writes the title and captions."""
+    if not logged_in(request):
+        return RedirectResponse("/login", status_code=303)
+    try:
+        channels, known = await publisher.target_channels(), True
+    except Exception as e:
+        log.warning("Upload page: could not read the Buffer channels (%s)", e)
+        channels, known = [], False
+    return page(request, "upload.html", rules=uploads.page_rules(channels), channels_known=known,
+                min_time=to_local_input(now_utc() + timedelta(minutes=5)))
+
+
 @app.get("/schedule", response_class=HTMLResponse)
 async def schedule_page(request: Request):
     if not logged_in(request):
@@ -293,6 +310,90 @@ async def api_demo_create(request: Request, body: NewDemo):
     if industry not in INDUSTRIES:
         raise HTTPException(400, "Pick an industry from the list, or Auto")
     return await pipeline.create(body.note[:500], None, industry=industry, by="dashboard")
+
+
+class VideoFile(BaseModel):
+    name: str
+    size: int
+
+
+@app.post("/api/uploads/video-target")
+async def api_video_target(request: Request, body: VideoFile):
+    """Step 1 of a video post: where the browser sends the video itself (straight to storage, with progress)."""
+    require_api_login(request)
+    try:
+        path, content_type = uploads.new_video_path(body.name, body.size)
+    except uploads.UploadError as e:
+        raise HTTPException(400, str(e)) from None
+    return {"path": path, **await get_store().upload_target(path, content_type)}
+
+
+@app.put("/api/uploads/local/{path:path}")
+async def api_local_upload(request: Request, path: str):
+    """Only without Supabase (on a computer for testing): the browser's video upload lands here."""
+    require_api_login(request)
+    store = get_store()
+    if store.kind != "local" or not uploads.VIDEO_PATH.match(path):
+        raise HTTPException(404)
+    dest = store.media_dir / path
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    size = 0
+    with open(dest, "wb") as f:
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > uploads.max_video_bytes():
+                f.close()
+                dest.unlink(missing_ok=True)
+                raise HTTPException(413, "The video is too big")
+            f.write(chunk)
+    return {"ok": True, "size": size}
+
+
+@app.post("/api/uploads")
+async def api_upload(request: Request):
+    """Step 2 (or the only step for pictures): check the media, store it and start the post."""
+    require_api_login(request)
+    form = await request.form(max_files=uploads.MAX_IMAGES + 5, max_fields=30)
+    kind = str(form.get("kind") or "")
+    if kind not in uploads.KIND_NAMES:
+        raise HTTPException(400, "Choose a photo, a carousel or a video")
+    note = str(form.get("note") or "").strip()
+    if len(note) > 600:
+        raise HTTPException(400, "Keep the description short: at most 600 characters")
+    when = future_time(str(form.get("publish_at") or "") or None)
+    try:
+        if kind == "video":
+            media = await uploads.save_video(form)
+        else:
+            media = await uploads.save_pictures(kind, [f for f in form.getlist("images") if hasattr(f, "read")])
+    except uploads.UploadError as e:
+        raise HTTPException(400, str(e)) from None
+    return await pipeline.create_upload(media, note, str(form.get("service") or "") or None, scheduled_for=when)
+
+
+class Chat(BaseModel):
+    messages: list[dict]
+
+
+@app.post("/api/assistant")
+async def api_assistant(request: Request, body: Chat):
+    """The prompt assistant in the chat bubble: writes Prompt / Message / Service options from an idea."""
+    require_api_login(request)
+    msgs = [m for m in body.messages[-20:] if isinstance(m, dict)]
+    if not msgs or msgs[-1].get("role") != "user" or not str(msgs[-1].get("content") or "").strip():
+        raise HTTPException(400, "Write a message first")
+    if len(str(msgs[-1]["content"])) > 2000:
+        raise HTTPException(400, "That message is very long. Keep it under 2,000 characters.")
+    recent = []
+    for p in (await get_store().list_posts(20))[:15]:
+        b = p.get("brief") or {}
+        head = " ".join(x for x in (b.get("headline_top"), b.get("headline_highlight")) if x)
+        recent.append(f"{p['idea'][:100]}" + (f" | on the post: {head}" if head else ""))
+    try:
+        return await assistant.reply(msgs, recent)
+    except LLMError as e:
+        log.warning("Assistant failed: %s", e)
+        raise HTTPException(503, "The assistant is busy right now. Please try again in a minute.") from None
 
 
 @app.get("/demos/{post_id}/download")
@@ -450,7 +551,8 @@ def invalid_link_page(request: Request) -> HTMLResponse:
 
 # One-tap reasons offered under the Reject button in the email.
 QUICK_REASONS = {"image": "Different image", "text": "Too much text", "focus": "Wrong service focus",
-                 "headline": "Headline not strong", "brand": "Colours not on brand"}
+                 "headline": "Headline not strong", "brand": "Colours not on brand", "tone": "Different tone",
+                 "short": "Shorter captions"}
 
 
 @app.get("/review/{post_id}", response_class=HTMLResponse)

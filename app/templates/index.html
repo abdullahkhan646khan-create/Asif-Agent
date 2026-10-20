@@ -85,10 +85,12 @@ const CLOCK = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" strok
 function card(p) {
   const c = p.captions || {};
   const title = c.title || p.idea;
-  const src = (p.brief && p.brief._thumb) || p.final_image_url;
-  const img = src && !WORKING.includes(p.status)
-    ? `<img src="${esc(src)}" alt="" loading="lazy" decoding="async">`
-    : `<div class="wait">${WORKING.includes(p.status) ? '<div class="spinner"></div>' : ''}${esc(p.stage_note || '')}</div>`;
+  const m = (p.prefs || {}).media;  // the client's own photo(s) or video
+  const src = (p.brief && p.brief._thumb) || mediaThumb(m) || p.final_image_url;
+  const busy = WORKING.includes(p.status);
+  const img = src && (!busy || m)
+    ? `<img src="${esc(src)}" alt="" loading="lazy" decoding="async">${busy ? `<div class="thumb-busy"><div class="spinner"></div>${esc(p.stage_note || "")}</div>` : ""}${mediaTag(m)}`
+    : `<div class="wait">${busy ? '<div class="spinner"></div>' : ''}${esc(p.stage_note || '')}</div>`;
   const when = p.scheduled_for && !["published", "cancelled"].includes(p.status)
     ? `<span class="when">${CLOCK} ${esc(dubai(p.scheduled_for))}</span>` : "";
   return `<a class="post" href="/posts/${p.id}">

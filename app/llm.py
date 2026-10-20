@@ -114,14 +114,14 @@ async def _call(client: httpx.AsyncClient, provider: str, key: str, model: str, 
         raise LLMError(f"{provider}/{model} unexpected reply: {str(data)[:300]}") from e
 
 
-async def _call_patiently(client, provider, key, model, messages, temperature) -> str:
+async def _call_patiently(client, provider, key, model, messages, temperature, max_wait: float = MAX_WAIT) -> str:
     """One request, waiting out short rate limits (a few seconds) before giving up on this model."""
     for attempt in range(RATE_LIMIT_RETRIES + 1):
         try:
             return await _call(client, provider, key, model, messages, temperature)
         except RateLimited as e:
             wait = e.wait if e.wait is not None else 5 * (attempt + 1)
-            if attempt == RATE_LIMIT_RETRIES or wait > MAX_WAIT:
+            if attempt == RATE_LIMIT_RETRIES or wait > max_wait:
                 raise
             log.info("%s/%s is busy, waiting %.1fs (as asked) then trying again", provider, model, wait)
             await asyncio.sleep(wait + 0.5)
@@ -167,6 +167,69 @@ async def ask_json(system: str, user: str, check: Callable[[dict], list[str]] | 
                 # Still has small problems after two fixes; the caller cleans up what is left.
                 return best, f"{provider}/{model}"
     raise LLMError("All text AI models failed: " + " | ".join(errors[-4:]))
+
+
+MAX_PICTURES = 3  # Groq's picture models take at most 3 pictures in one request
+
+
+async def ask_vision_json(system: str, text: str, pictures: list[bytes], temperature: float = 0.3) -> tuple[dict, str]:
+    """Show up to 3 JPEG pictures to a model that can see, and get a JSON object back.
+
+    Returns (data, "provider/model"). Tries every model in GROQ_VISION_MODELS in order."""
+    import base64
+    s = get_settings()
+    candidates = [("groq", s.groq_api_key, m) for m in s.groq_vision_model_list
+                  if s.groq_api_key and f"groq/{m}" not in _missing_models]
+    if not candidates:
+        raise LLMError("No picture-reading AI configured (GROQ_API_KEY and GROQ_VISION_MODELS)")
+    content = [{"type": "text", "text": text}] + [
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(p).decode()}}
+        for p in pictures[:MAX_PICTURES]]
+    errors = []
+    async with httpx.AsyncClient(timeout=120) as client:
+        for provider, key, model in candidates:
+            messages = [{"role": "system", "content": system}, {"role": "user", "content": content}]
+            for _ in range(2):
+                try:  # pictures use many tokens: waiting up to a minute for the allowance is better than failing
+                    reply = await _call_patiently(client, provider, key, model, messages, temperature, max_wait=70)
+                except (LLMError, httpx.HTTPError) as e:
+                    errors.append(str(e))
+                    log.warning("Picture AI call failed: %s", e)
+                    break
+                try:
+                    return _extract_json(reply), f"{provider}/{model}"
+                except (ValueError, json.JSONDecodeError) as e:
+                    errors.append(f"{provider}/{model}: bad JSON ({e})")
+                    messages += [{"role": "assistant", "content": reply},
+                                 {"role": "user", "content": "That was not valid JSON. Reply with ONLY the JSON object."}]
+    raise LLMError("The picture-reading AI failed: " + " | ".join(errors[-3:]))
+
+
+# Whisper writes these on silent or music-only videos; they are not real speech
+NOT_SPEECH = re.compile(r"^\W*(thank you|thanks for watching|you|bye|music|\[music\]|subtitles by.*)\W*$", re.I)
+
+
+async def transcribe(data: bytes, filename: str) -> str:
+    """What is said in a video (Groq Whisper; files up to 25 MB). Empty when nothing useful is said or it fails."""
+    s = get_settings()
+    if not s.groq_api_key or not data or len(data) > 25 * 1024 * 1024:
+        return ""
+    try:
+        async with httpx.AsyncClient(timeout=180) as client:
+            r = await client.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {s.groq_api_key}"},
+                files={"file": (filename, data, "video/mp4")},
+                data={"model": s.groq_whisper_model, "response_format": "json", "temperature": "0"},
+            )
+        if r.status_code >= 400:
+            log.info("No speech text for %s (%s): %s", filename, r.status_code, r.text[:200])
+            return ""
+        text = " ".join(str(r.json().get("text") or "").split())
+    except (httpx.HTTPError, ValueError) as e:
+        log.info("No speech text for %s: %s", filename, e)
+        return ""
+    return "" if len(text) < 15 or NOT_SPEECH.match(text) else text[:2000]
 
 
 async def ping() -> str:

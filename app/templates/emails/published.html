@@ -16,6 +16,7 @@
         <td style="padding:10px 0;border-bottom:1px solid #EEF2F8;"><b>{{ r.label }}</b> <span style="color:#6B7280;">{{ r.name }}</span></td>
         <td align="right" style="padding:10px 0;border-bottom:1px solid #EEF2F8;">
           {% if r.ok %}<span style="color:#16A34A;font-weight:bold;">✓ Sent to Buffer</span>
+          {% elif r.skipped %}<span style="color:#6B7280;font-weight:bold;">– Skipped</span><br><span style="color:#6B7280;font-size:12px;">{{ r.error }}</span>
           {% else %}<span style="color:#DC2626;font-weight:bold;">✗ Failed</span><br><span style="color:#6B7280;font-size:12px;">{{ r.error }}</span>{% endif %}
         </td>
       </tr>

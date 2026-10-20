@@ -38,10 +38,15 @@ def main():
     posts = ok(c.get("/rest/v1/posts", params={"select": "id,status"}))
     settings = ok(c.get("/rest/v1/settings", params={"select": "key"}))
     old_keys = [x["key"] for x in settings if x["key"].startswith(TEST_SETTINGS)]
-    files = []
-    for folder in ok(c.post(f"/storage/v1/object/list/{bucket}", json={"prefix": "", "limit": 10000})):
-        inside = ok(c.post(f"/storage/v1/object/list/{bucket}", json={"prefix": folder["name"] + "/", "limit": 1000}))
-        files += [f"{folder['name']}/{f['name']}" for f in inside] if inside else [folder["name"]]
+    def all_files(prefix: str = "") -> list[str]:
+        """Every file under prefix, also inside sub-folders (uploads/<batch>/...)."""
+        found = []
+        for item in ok(c.post(f"/storage/v1/object/list/{bucket}", json={"prefix": prefix, "limit": 10000})) or []:
+            name = f"{prefix}{item['name']}"
+            found += all_files(name + "/") if item.get("id") is None else [name]  # folders have no id
+        return found
+
+    files = all_files()
 
     print(f"Posts:            {len(posts)}")
     print(f"Pictures:         {len(files)} files")

@@ -194,6 +194,36 @@ class GeminiPool:
             raise ImageGenError("No Gemini cookies set. Put them in GEMINI_A_1PSID / GEMINI_A_1PSIDTS (.env or Render Environment).")
         raise ImageGenError("All Gemini accounts failed. " + " | ".join(errors))
 
+    async def describe(self, prompt: str, pictures: list[bytes]) -> tuple[str, str]:
+        """Backup for looking at the client's own pictures: Gemini reads them and answers in text.
+        Returns (answer, slot). Cookie states are left to the regular checks."""
+        tmp = Path(tempfile.gettempdir()) / "post-agent"
+        tmp.mkdir(parents=True, exist_ok=True)
+        paths = []
+        for data in pictures:
+            p = tmp / f"look-{uuid.uuid4().hex}.jpg"
+            p.write_bytes(data)
+            paths.append(p)
+        errors = []
+        try:
+            async with self.lock:
+                for slot in SLOTS:
+                    if (await self.status(slot))["state"] in ("missing", "dead"):
+                        continue
+                    try:
+                        client = await self._client(slot)
+                        out = await client.generate_content(prompt, files=[str(p) for p in paths], temporary=True)
+                        if (out.text or "").strip():
+                            return out.text, slot
+                        errors.append(f"{slot}: empty answer")
+                    except Exception as e:
+                        await self._drop_client(slot)
+                        errors.append(f"{slot}: {type(e).__name__}: {e}")
+        finally:
+            for p in paths:
+                p.unlink(missing_ok=True)
+        raise ImageGenError("Gemini could not look at the pictures: " + (" | ".join(errors) or "no working Gemini account"))
+
     async def health_loop(self):
         """Test every cookie shortly after start and then every few hours. In between, save the
         cookie values Gemini refreshes in the background, so a Render restart doesn't lose them."""

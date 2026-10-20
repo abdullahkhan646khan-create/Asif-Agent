@@ -22,6 +22,7 @@
     <nav>
       <a href="/" class="{{ 'on' if request.url.path == '/' }}">{{ icon("grid", 17) }}<b>Posts</b></a>
       <a href="/schedule" class="{{ 'on' if request.url.path == '/schedule' }}">{{ icon("calendar", 17) }}<b>Schedule</b></a>
+      <a href="/upload" class="{{ 'on' if request.url.path == '/upload' }}">{{ icon("upload", 17) }}<b>Upload</b></a>
       <a href="/demos" class="{{ 'on' if request.url.path == '/demos' }}">{{ icon("image", 17) }}<b>Demos</b></a>
     </nav>
     <div class="top-right">
@@ -36,7 +37,43 @@
 {% endif %}
 <main class="wrap">{% block content %}{% endblock %}</main>
 <div id="toast" class="toast" hidden></div>
+{% if request.session.get('auth') %}
+{% macro bot(cls="") -%}
+<span class="bot {{ cls }}" data-mood="idle" aria-hidden="true">
+  <span class="bot-antenna"><i></i></span>
+  <span class="bot-head"><span class="bot-face">
+    <span class="eye l"></span><span class="eye r"></span><span class="mouth"></span>
+    <span class="cheek l"></span><span class="cheek r"></span>
+  </span></span>
+</span>
+{%- endmacro %}
+<div class="ai" id="ai">
+  <div class="ai-bubble" id="ai-bubble" hidden>Hi! I can write a fresh post prompt for you ✨</div>
+  <button type="button" class="ai-fab" id="ai-fab" aria-label="Open Amana, the AI prompt assistant" aria-expanded="false" aria-controls="ai-panel">
+    <span class="ai-halo"></span>{{ bot("big") }}
+    <span class="ai-sparks" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+  </button>
+  <section class="ai-panel" id="ai-panel" role="dialog" aria-label="Amana, the AI prompt assistant" hidden>
+    <header class="ai-head">
+      <span class="ai-head-bot">{{ bot() }}</span>
+      <div class="ai-head-txt"><b>Amana</b><span id="ai-status"><i class="dot"></i>Prompt assistant · ready</span></div>
+      <button type="button" class="ai-icon-btn" id="ai-new" title="New chat" aria-label="Start a new chat">{{ icon("refresh", 16) }}</button>
+      <button type="button" class="ai-icon-btn" id="ai-close" title="Close" aria-label="Close">{{ icon("x", 18) }}</button>
+    </header>
+    <div class="ai-log" id="ai-log" aria-live="polite"></div>
+    <div class="ai-quick" id="ai-quick">
+      <button type="button">CCTV for a warehouse</button><button type="button">AI receptionist for a clinic</button>
+      <button type="button">Fiber cabling in a new office</button><button type="button">Surprise me</button>
+    </div>
+    <form class="ai-input" id="ai-form">
+      <textarea id="ai-text" rows="1" maxlength="2000" placeholder="Tell me your idea…" aria-label="Your message"></textarea>
+      <button type="submit" class="ai-send" id="ai-send" aria-label="Send">{{ icon("send", 18) }}</button>
+    </form>
+  </section>
+</div>
+{% endif %}
 <script src="/static/app.js"></script>
+{% if request.session.get('auth') %}<script src="/static/assistant.js"></script>{% endif %}
 {% block scripts %}{% endblock %}
 </body>
 </html>

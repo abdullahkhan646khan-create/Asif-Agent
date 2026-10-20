@@ -59,6 +59,22 @@ function ago(iso) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
+function clock(s) {
+  s = Math.round(s || 0);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// the client's own media on a post card: its small picture, and a tag saying what it is
+function mediaThumb(m) {
+  if (!m) return "";
+  return m.kind === "video" ? (m.poster || {}).thumb : ((m.items || [])[0] || {}).thumb;
+}
+function mediaTag(m) {
+  if (!m) return "";
+  const text = m.kind === "video" ? `▶ ${clock((m.video || {}).duration)}` : m.kind === "carousel" ? `${(m.items || []).length} photos` : "Your photo";
+  return `<span class="media-tag">${esc(text)}</span>`;
+}
+
 async function copyText(btn, id) {
   await navigator.clipboard.writeText(document.getElementById(id).innerText);
   btn.textContent = "Copied ✓";

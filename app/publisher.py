@@ -14,6 +14,7 @@ import time
 import httpx
 
 from .config import get_settings
+from .uploads import IMAGES_PER_POST, video_problem
 
 log = logging.getLogger("buffer")
 API = "https://api.buffer.com"
@@ -134,24 +135,51 @@ def _website() -> str:
     return load_brand().company.get("website_url") or f"https://{load_brand().company['website']}"
 
 
-def _input(channel: dict, captions: dict, image_url: str, mode: str | None = None) -> dict:
+def media_assets(service: str, media: dict | None, image_url: str) -> list[dict]:
+    """Buffer's assets for this channel: the designed picture, the client's own pictures (as many as that network
+    takes in one post: a carousel on Instagram), or the client's video."""
+    if not media:
+        return [{"image": {"url": image_url}}]
+    if media.get("kind") == "video":
+        video = {"url": media["video"]["url"]}
+        if service in ("instagram", "tiktok", "pinterest") and media["video"].get("cover_ms"):
+            video["metadata"] = {"thumbnailOffset": int(media["video"]["cover_ms"])}  # the cover frame the client chose
+        return [{"video": video}]
+    return [{"image": {"url": item["url"]}} for item in media["items"][:IMAGES_PER_POST.get(service, 10)]]
+
+
+def skip_reason(service: str, media: dict | None) -> str | None:
+    """Why this post can't go to this kind of channel at all (it is skipped there, not failed)."""
+    if media and media.get("kind") == "video":
+        return video_problem(service, media["video"])
+    return None
+
+
+def _input(channel: dict, captions: dict, image_url: str, mode: str | None = None, media: dict | None = None) -> dict:
     service = channel["service"]
     s = get_settings()
+    video = bool(media and media.get("kind") == "video")
+    text = caption_for(service, captions)
+    if video and service == "tiktok":
+        text = _shorten(text, 150)  # Buffer: a TikTok video's text can be at most 150 characters
     data = {
         "channelId": channel["id"],
-        "text": caption_for(service, captions),
+        "text": text,
         "schedulingType": "automatic",
         "mode": mode or s.publish_mode,
-        "assets": [{"image": {"url": image_url}}],
+        "assets": media_assets(service, media, image_url),
         "aiAssisted": True,
     }
     if service == "facebook":
-        data["metadata"] = {"facebook": {"type": "post"}}
+        data["metadata"] = {"facebook": {"type": "post"}}  # Buffer posts a vertical video as a Reel by itself
+        if video and captions.get("title"):
+            data["assets"][0]["video"]["metadata"] = {"title": captions["title"][:100]}  # shown above the video
     elif service == "instagram":
-        data["metadata"] = {"instagram": {"type": "post", "shouldShareToFeed": True}}  # both required by Buffer
-    elif service == "tiktok":  # picture post; TikTok asks for AI-made pictures to be labelled
+        # both fields are required by Buffer; Instagram publishes every video as a Reel, several pictures as a carousel
+        data["metadata"] = {"instagram": {"type": "reel" if video else "post", "shouldShareToFeed": True}}
+    elif service == "tiktok":  # TikTok asks for AI-made pictures to be labelled; the client's own media are not
         data["metadata"] = {"tiktok": {"title": (captions.get("tiktok_title") or captions.get("title") or "")[:90],
-                                       "isAiGenerated": True}}
+                                       "isAiGenerated": not media}}
     elif service == "pinterest":
         boards = (channel.get("metadata") or {}).get("boards") or []
         pin = {"title": (captions.get("pinterest_title") or captions.get("title") or "")[:100], "url": _website()}
@@ -166,8 +194,9 @@ def _input(channel: dict, captions: dict, image_url: str, mode: str | None = Non
 
 
 async def publish(captions: dict, image_url: str, only_channel_ids: list[str] | None = None,
-                  mode: str | None = None) -> dict:
-    """Send the post to each channel. Returns {"dry_run": bool, "channels": [...per channel result...]}."""
+                  mode: str | None = None, media: dict | None = None) -> dict:
+    """Send the post to each channel. Returns {"dry_run": bool, "channels": [...per channel result...]}.
+    media = the client's own pictures or video (see uploads.py); without it the designed picture is posted."""
     s = get_settings()
     channels = await target_channels()
     if only_channel_ids:
@@ -178,6 +207,10 @@ async def publish(captions: dict, image_url: str, only_channel_ids: list[str] | 
     for ch in channels:
         res = {"channel_id": ch["id"], "service": ch["service"], "name": ch["name"],
                "label": SERVICES.get(ch["service"], ch["service"])}
+        why = skip_reason(ch["service"], media)
+        if why:
+            results.append({**res, "ok": False, "skipped": True, "error": f"Skipped: {why}."})
+            continue
         if ch.get("isDisconnected") or ch.get("isLocked"):
             results.append({**res, "ok": False, "error": "Channel is disconnected or locked in Buffer; reconnect it there."})
             continue
@@ -185,7 +218,7 @@ async def publish(captions: dict, image_url: str, only_channel_ids: list[str] | 
             results.append({**res, "ok": True, "buffer_post_id": "dry-run"})
             continue
         try:
-            data = await gql(CREATE_POST, {"input": _input(ch, captions, image_url, mode)})
+            data = await gql(CREATE_POST, {"input": _input(ch, captions, image_url, mode, media)})
             out = data["createPost"]
             if out.get("post"):
                 results.append({**res, "ok": True, "buffer_post_id": out["post"]["id"], "due_at": out["post"].get("dueAt")})

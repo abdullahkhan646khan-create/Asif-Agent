@@ -25,6 +25,7 @@ from .config import get_settings
 from .security import review_link
 from .store import get_store
 from .timeutil import fmt, now_utc, parse
+from .uploads import clock, media_label
 
 log = logging.getLogger("email")
 env = Environment(
@@ -156,6 +157,16 @@ async def send_review(post: dict, image_bytes: bytes):
     when = parse(post.get("scheduled_for"))
     auto = bool((post.get("prefs") or {}).get("auto_publish") and when)
     future = bool(when and when > now_utc())
+    media = (post.get("prefs") or {}).get("media")  # the client's own photo(s) or video
+    inline = {"post": image_bytes}
+    more = []  # the carousel's other photos, small, under the first one
+    if media and media.get("kind") == "carousel":
+        for n, item in enumerate(media["items"][1:], 2):
+            try:
+                inline[f"pic{n}"] = await get_store().read_file(item["thumb_path"])
+                more.append(f"pic{n}")
+            except Exception:
+                log.warning("Carousel photo %s of %s could not be added to the email", n, post["id"])
     ctx = {
         "brand": brand, "post": post, "captions": c, "brief": post["brief"],
         "approve_url": review_link(post, "approve"), "reject_url": review_link(post, "reject"),
@@ -164,9 +175,13 @@ async def send_review(post: dict, image_bytes: bytes):
         "platforms": caption_blocks(c),
         "when_label": fmt(when) if when else None, "auto": auto, "future": future,
         "targets": await publisher.target_label(),
+        "media": media, "media_label": media_label(media) if media else None, "more": more,
+        "clock": clock,
     }
     html = env.get_template("review.html").render(**ctx)
     lines = [f"Post: {c['title']}"]
+    if media:
+        lines.append(f"Your {media_label(media)}" + (f": {media['video']['url']}" if media["kind"] == "video" else ""))
     if auto:
         lines.append(f"This post will be published AUTOMATICALLY on {ctx['when_label']} (Dubai time).")
     elif when:
@@ -184,7 +199,7 @@ async def send_review(post: dict, image_bytes: bytes):
         subject = f"Approve for {fmt(when)}: {c['title']}{version}"
     else:
         subject = f"Review post: {c['title']}{version}"
-    await send(s.review_recipients, subject, html, text, {"post": image_bytes})
+    await send(s.review_recipients, subject, html, text, inline)
 
 
 async def send_published(post: dict):
@@ -196,14 +211,16 @@ async def send_published(post: dict):
     )
     channels = results.get("channels", [])
     ok = [r for r in channels if r.get("ok")]
-    text = "\n".join(f"{r['label']} ({r['name']}): {'OK' if r.get('ok') else 'FAILED - ' + str(r.get('error'))}"
+    text = "\n".join(f"{r['label']} ({r['name']}): " + ("OK" if r.get("ok") else str(r.get("error")) if r.get("skipped")
+                                                        else "FAILED - " + str(r.get("error")))
                      for r in channels) or str(post.get("error") or "")
     title = post["captions"]["title"]
     names = ", ".join(f"{r['label']} ({r['name']})" for r in ok)
-    if channels and len(ok) == len(channels):
+    tried = [r for r in channels if not r.get("skipped")]  # skipped = that network can't take this kind of post
+    if tried and len(ok) == len(tried):
         subject = f"✅ Published to {names}: {title}"
     elif ok:
-        subject = f"⚠️ Partly published ({len(ok)}/{len(channels)}): {title}"
+        subject = f"⚠️ Partly published ({len(ok)}/{len(tried)}): {title}"
     else:
         subject = f"❌ Publishing failed: {title}"
     if results.get("dry_run"):

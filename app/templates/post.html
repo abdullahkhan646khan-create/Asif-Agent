@@ -5,11 +5,32 @@
 {% set b = post.brief or {} %}
 {% set prefs = post.prefs or {} %}
 {% set working = post.status in ["queued", "writing", "imaging", "designing", "emailing", "publishing"] %}
+{% set media = prefs.media %}
 {% block content %}
 <a class="back" href="/">{{ icon("arrow-left", 16) }} All posts</a>
 <div class="grid2 post-page">
   <div class="stack media-col">
-    {% if post.final_image_url and not working %}
+    {% if media and media.kind == "video" %}
+      <div class="media-frame">
+        {% if media.video.removed %}
+          <img class="bigimg" src="{{ media.poster.url }}" alt="Video cover">
+          <p class="muted small" style="margin:10px 4px 2px">The video file was removed from storage a week after publishing. It is still on the social networks.</p>
+        {% else %}
+          <video class="bigimg" controls playsinline preload="metadata" poster="{{ media.poster.url }}" src="{{ media.video.url }}"></video>
+        {% endif %}
+        <div class="media-facts">{{ icon("video", 15) }} Your video · {{ media.video.duration|clock }} · {{ media.video.width }}×{{ media.video.height }} · {{ "%.1f"|format(media.video.size / 1048576) }} MB</div>
+      </div>
+    {% elif media %}
+      <div class="media-frame">
+        <img class="bigimg" id="car-main" src="{{ media["items"][0].url }}" alt="Your photo">
+        {% if media.kind == "carousel" %}
+        <div class="car-strip" id="car-strip">
+          {% for item in media["items"] %}<button type="button" class="{{ 'on' if loop.first }}" data-src="{{ item.url }}" aria-label="Photo {{ loop.index }}"><img src="{{ item.thumb }}" alt=""><span>{{ loop.index }}</span></button>{% endfor %}
+        </div>
+        {% endif %}
+        <div class="media-facts">{{ icon("image", 15) }} Your {{ media|media_label }}{% if media["items"]|selectattr("fitted")|list %} · soft background added to fit Instagram's shape{% endif %}</div>
+      </div>
+    {% elif post.final_image_url and not working %}
       <div class="media-frame"><img class="bigimg" src="{{ b._thumb or post.final_image_url }}" data-full="{{ post.final_image_url }}" alt="Post image"></div>
     {% else %}
       <div class="card thumb"><div class="wait">{% if working %}<div class="spinner"></div>{% endif %}{{ post.stage_note or "" }}</div></div>
@@ -37,7 +58,8 @@
       </div>
       <h1 class="post-title">{{ c.title or post.idea }}</h1>
       <p class="muted small" style="margin:0">
-        {% if post.idea.startswith("Auto: ") %}Topic picked by the agent: {{ post.idea[6:] }}{% else %}Idea: “{{ post.idea }}”{% endif %}
+        {% if media %}Your own {{ media|media_label }}{% if prefs.note %} · your note: “{{ prefs.note }}”{% endif %} · the AI writes the title and captions
+        {% elif post.idea.startswith("Auto: ") %}Topic picked by the agent: {{ post.idea[6:] }}{% else %}Idea: “{{ post.idea }}”{% endif %}
       </p>
       {% if when and post.status not in ["published", "cancelled", "missed"] %}
       <div class="alert info">{{ icon("clock", 16) }} <span>{% if post.status == "scheduled" %}Goes out on {% endif %}<b>{{ when|dubai }}</b> (Dubai time)
@@ -65,9 +87,16 @@
       {% endif %}
       {% if can.reject %}
       <div class="subpanel">
+        {% if media %}
+        <label class="lbl" for="reason">Not happy with the text? Tell the AI what to change (optional)</label>
+        <textarea id="reason" rows="2" placeholder="e.g. Shorter, more professional, mention it was done in Al Quoz"></textarea>
+        <div class="row" style="margin-top:10px"><button class="btn red" onclick="act('reject')">{{ icon("refresh", 16) }} Write new captions</button>
+          <span class="muted small">{{ "Your video stays" if media.kind == "video" else "Your photos stay" }} the same.</span></div>
+        {% else %}
         <label class="lbl" for="reason">Not happy? Tell the AI what to change (optional)</label>
         <textarea id="reason" rows="2" placeholder="e.g. Use a darker look, focus on data centers, shorter text"></textarea>
         <div class="row" style="margin-top:10px"><button class="btn red" onclick="act('reject')">{{ icon("refresh", 16) }} Reject &amp; make a new version</button></div>
+        {% endif %}
       </div>
       {% endif %}
       {% if post.status in ["failed", "publish_failed", "partly_published"] %}
@@ -105,7 +134,7 @@
       <h3 class="card-title">{{ icon("send", 17) }} Publishing{% if post.publish_results.dry_run %} (test mode, nothing posted){% endif %}</h3>
       <ul class="results">
         {% for r in post.publish_results.channels %}
-        <li>{{ "✅" if r.ok else "❌" }} <b>{{ r.label }}</b> <span class="muted">{{ r.name }}</span>{% if r.error %}: <span class="small" style="color:var(--red)">{{ r.error }}</span>{% endif %}</li>
+        <li>{{ "✅" if r.ok else "⏭️" if r.skipped else "❌" }} <b>{{ r.label }}</b> <span class="muted">{{ r.name }}</span>{% if r.error %}: <span class="small" style="color:var(--red)">{{ r.error }}</span>{% endif %}</li>
         {% endfor %}
       </ul>
     </div>
@@ -113,7 +142,12 @@
 
     {% if c %}
     <div class="card">
-      <h3 class="card-title">{{ icon("edit", 17) }} Captions</h3>
+      <h3 class="card-title">{{ icon("edit", 17) }} {% if media %}Title and captions{% else %}Captions{% endif %}</h3>
+      {% if media and c.title %}
+      <div class="caption-head"><b>Title <span class="muted" style="font-weight:400">· video title on Facebook, TikTok and Pinterest title</span></b>
+        <button class="copy" onclick="copyText(this,'cap-title')">Copy</button></div>
+      <div class="caption" id="cap-title">{{ c.title }}</div>
+      {% endif %}
       {% for label, key in [("Facebook", "facebook"), ("Instagram", "instagram"), ("LinkedIn", "linkedin"), ("X (Twitter)", "x"),
                             ("Threads", "threads"), ("TikTok", "tiktok"), ("Pinterest", "pinterest"), ("Google Business", "googlebusiness"),
                             ("Bluesky", "bluesky"), ("Mastodon", "mastodon"), ("Substack", "substack")] if c[key] %}
@@ -130,6 +164,18 @@
     {% if b %}
     <div class="card">
       <h3 class="card-title">{{ icon("info", 17) }} Behind the scenes</h3>
+      {% if media %}
+      <dl class="kv">
+        <dt>Media</dt><dd>Your {{ media|media_label }}{% if media.kind == "video" and media.video.codec == "hevc" %} · HEVC (H.265){% endif %}</dd>
+        <dt>Service</dt><dd>{{ b.service }}</dd>
+        <dt>Angle</dt><dd>{{ b.angle }}</dd>
+        <dt>What the AI saw</dt><dd>{{ b.what_we_see }}</dd>
+        {% if b.visible_text %}<dt>Text in it</dt><dd>{{ b.visible_text }}</dd>{% endif %}
+        {% if b.spoken_in_video %}<dt>Said in the video</dt><dd class="small">{{ b.spoken_in_video }}</dd>{% endif %}
+        {% if b._quality %}<dt>AI's note</dt><dd style="color:var(--amber)">{{ b._quality }}</dd>{% endif %}
+        <dt>AI</dt><dd class="small">{{ b._model }}{% if c._model and c._model != b._model %} / {{ c._model }}{% endif %}</dd>
+      </dl>
+      {% else %}
       <dl class="kv">
         <dt>Layout</dt><dd>{{ b.template }}</dd>
         <dt>Service</dt><dd>{{ b.service }}</dd>
@@ -142,6 +188,7 @@
         <dt>Text AI</dt><dd class="small">{{ b._model }}{% if c._model and c._model != b._model %} / {{ c._model }}{% endif %}</dd>
         {% if b._gemini_account %}<dt>Gemini account</dt><dd>{{ b._gemini_account }}</dd>{% endif %}
       </dl>
+      {% endif %}
     </div>
     {% endif %}
   </div>
@@ -151,6 +198,12 @@
 {% block scripts %}
 <script>
 document.getElementById("badge").innerHTML = badge({{ post.status|tojson }});
+document.getElementById("car-strip")?.addEventListener("click", (e) => {  // carousel: show the photo that was tapped
+  const b = e.target.closest("button[data-src]");
+  if (!b) return;
+  document.getElementById("car-main").src = b.dataset.src;
+  document.querySelectorAll("#car-strip button").forEach((x) => x.classList.toggle("on", x === b));
+});
 const CONFIRM = {
   approve: {{ (("Approve this post? It will be published on " ~ (when|dubai) ~ " (Dubai time) to " ~ targets ~ ".") if future else "Publish this post to " ~ targets ~ " now?")|tojson }},
   "publish-now": {{ ("Publish this post to " ~ targets ~ " right now?")|tojson }},

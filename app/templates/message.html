@@ -9,7 +9,7 @@
     {% if results %}
     <ul class="results" style="text-align:left">
       {% for r in results %}
-      <li>{{ "✅" if r.ok else "❌" }} <b>{{ r.label }}</b> <span class="muted">{{ r.name }}</span>{% if r.error %}: <span class="small" style="color:var(--red)">{{ r.error }}</span>{% endif %}</li>
+      <li>{{ "✅" if r.ok else "⏭️" if r.skipped else "❌" }} <b>{{ r.label }}</b> <span class="muted">{{ r.name }}</span>{% if r.error %}: <span class="small" style="color:var(--red)">{{ r.error }}</span>{% endif %}</li>
       {% endfor %}
     </ul>
     {% endif %}

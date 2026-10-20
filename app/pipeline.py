@@ -20,8 +20,10 @@ from .imagegen import pool
 from .industries import INDUSTRIES, industry_name, next_scene
 from .store import get_store
 from .timeutil import fmt, iso, now_utc, parse
+from .llm import transcribe
+from .uploads import media_label, pictures_for_ai
 from .variety import fingerprint, looks_like_earlier, make_plan, plan_label
-from .writer import image_prompt, make_brief, make_clean_brief, make_copy
+from .writer import image_prompt, make_brief, make_clean_brief, make_copy, make_upload_brief
 
 log = logging.getLogger("pipeline")
 
@@ -36,7 +38,9 @@ STAGE_LABEL = {
     "pending_review": "Waiting for your approval", "publishing": "Publishing through Buffer",
     "demo_ready": "Demo ready · preview and download only, never published",
 }
+LOOKING = "Looking at your media and writing the captions"
 LATE_LIMIT = timedelta(hours=3)  # a scheduled post more than this late is not published by itself
+VIDEO_KEEP = timedelta(days=7)  # a published or cancelled post's video file is removed from storage after this
 
 _tasks: set[asyncio.Task] = set()
 _running: set[str] = set()
@@ -74,9 +78,14 @@ async def events(post_id: str) -> list[dict]:
         return []
 
 
-async def _stage(post_id: str, status: str) -> dict:
+def is_upload(post: dict) -> bool:
+    """The client's own photo(s) or video: nothing is designed, the AI only writes the text."""
+    return (post.get("prefs") or {}).get("mode") == "upload"
+
+
+async def _stage(post_id: str, status: str, label: str | None = None) -> dict:
     """Move to the next making step. Raises Stopped if the post was cancelled meanwhile."""
-    post = await get_store().claim(post_id, WORKING, status, stage_note=STAGE_LABEL[status], error=None)
+    post = await get_store().claim(post_id, WORKING, status, stage_note=label or STAGE_LABEL[status], error=None)
     if not post:
         raise Stopped()
     return post
@@ -87,7 +96,9 @@ async def variety_history(current_id: str) -> list[dict]:
     For the post being made, only its rejected versions count (the new version must differ from them)."""
     out = []
     for p in await get_store().list_posts(300):
-        if p["id"] != current_id and p.get("brief"):
+        if p["id"] != current_id and p.get("brief") and is_upload(p):
+            out.append({"brief": None, "captions": p.get("captions")})  # no headline or picture to compare with
+        elif p["id"] != current_id and p.get("brief"):
             out.append({"brief": p["brief"], "captions": p.get("captions")})
         for h in reversed(p.get("history") or []):
             if h.get("brief"):
@@ -117,6 +128,28 @@ async def generate(post_id: str) -> None:
             demo = INDUSTRIES.get(prefs.get("industry")) and mode == "demo"
             # typed ideas (with Auto layout) and industry demos use the clean style; Auto and schedule keep the layouts
             clean = bool(demo) or (mode == "idea" and not post.get("template_pref"))
+
+            if mode == "upload" and (not post.get("brief") or not post.get("captions")):
+                # the client's own photo(s) or video: the AI looks at it and writes the title and captions
+                stage = "writing"
+                post = await _stage(post_id, stage, LOOKING)
+                media, note_text = prefs["media"], prefs.get("note") or ""
+                if not post.get("brief"):
+                    paths = prefs["media"].get("frames") if media["kind"] == "video" else [i["path"] for i in media["items"]]
+                    pictures = await asyncio.to_thread(pictures_for_ai, [await store.read_file(p) for p in paths])
+                    spoken = ""
+                    if media["kind"] == "video" and media["video"]["size"] <= 25 * 1024 * 1024:
+                        spoken = await transcribe(await store.read_file(media["video"]["path"]), "video.mp4")
+                    brief = await make_upload_brief(brand, media, pictures, note_text, prefs.get("service"), spoken)
+                    post = await store.update_post(post_id, brief=brief)
+                try:  # a caption for every platform connected in Buffer right now
+                    platforms = await publisher.caption_platforms()
+                except Exception as e:
+                    platforms = None
+                    log.warning("Could not read the Buffer channels (%s); using POST_PLATFORMS", e)
+                captions = await make_copy(brand, note_text, post["brief"], {}, past, feedback, platforms,
+                                           mode="upload", media=media["kind"])
+                post = await store.update_post(post_id, captions=captions)
 
             if clean and (not post.get("brief") or not post.get("captions")):
                 stage = "writing"
@@ -269,6 +302,50 @@ async def create(idea: str, template_pref: str | None, service: str | None = Non
     return post
 
 
+async def create_upload(media: dict, note_text: str = "", service: str | None = None, scheduled_for=None,
+                        by: str = "dashboard") -> dict:
+    """A post from the client's own photo, carousel or video (already checked and stored, see uploads.py).
+    The AI looks at it and writes the title and captions; then the usual approval email and publishing."""
+    brand = load_brand()
+    prefs = {"mode": "upload", "media": media, "note": note_text.strip(), "source": "upload", "post_type": None,
+             "service": service if service and brand.service(service) else None, "auto_publish": False,
+             "if_no_answer": "wait"}
+    label = media_label(media)
+    store = get_store()
+    post = await store.create_post(note_text.strip() or f"Your {label}", None, prefs,
+                                   iso(scheduled_for) if scheduled_for else None)
+    cover = media["poster"] if media["kind"] == "video" else media["items"][0]
+    post = await store.update_post(post["id"], raw_image_path=cover["path"], final_image_path=cover["path"],
+                                   final_image_url=cover["url"])
+    await note(post["id"], f"Uploaded your {label}" + (f" · to go out {fmt(scheduled_for)}" if scheduled_for else ""), by)
+    spawn(generate(post["id"]))
+    return post
+
+
+async def remove_old_videos(now=None) -> int:
+    """Videos fill the storage fast (Supabase's free plan holds 1 GB). A week after a video post was published or
+    cancelled, its video file is removed; the networks keep their own copy, and the cover and captions stay here."""
+    store = get_store()
+    now = now or now_utc()
+    removed = 0
+    for post in await store.posts_in_status(["published", "cancelled"]):
+        prefs = post.get("prefs") or {}
+        video = (prefs.get("media") or {}).get("video")
+        done = parse(post.get("published_at") or post.get("updated_at"))
+        if not video or video.get("removed") or not done or now - done < VIDEO_KEEP:
+            continue
+        try:
+            await store.delete_file(video["path"])
+        except Exception:
+            log.exception("Could not remove the old video of %s", post["id"])
+            continue
+        media = {**prefs["media"], "video": {**video, "removed": iso(now)}}
+        await store.update_post(post["id"], prefs={**prefs, "media": media})
+        await note(post["id"], "Video file removed from storage after a week (the social networks keep their copy)")
+        removed += 1
+    return removed
+
+
 async def retry(post_id: str, by: str = "dashboard") -> dict | None:
     store = get_store()
     post = await store.get_post(post_id)
@@ -297,13 +374,17 @@ async def reject(post_id: str, reason: str, by: str = "dashboard") -> dict | Non
         "final_image_url": post.get("final_image_url"), "reason": reason, "at": _now(),
     }]
     prefs = {**(post.get("prefs") or {}), "plan": None}
+    # the client's own photo or video stays: only the text is written again (what the AI saw is kept too)
+    redo = (dict(brief=post.get("brief")) if is_upload(post) else
+            dict(brief=None, raw_image_path=None, final_image_path=None, final_image_url=None))
     post = await store.claim(
         post_id, CAN_REJECT, "queued", attempt=post["attempt"] + 1, reject_reason=reason or None,
-        history=history, prefs=prefs, brief=None, captions=None, raw_image_path=None, final_image_path=None,
-        final_image_url=None, error=None, stage_note="Rejected; making a new version", reviewed_at=_now(),
+        history=history, prefs=prefs, captions=None, error=None, stage_note="Rejected; making a new version",
+        reviewed_at=_now(), **redo,
     )
     if post:
-        await note(post_id, f"Rejected{f' (“{reason}”)' if reason else ''} → making version {post['attempt']}", by)
+        what = "writing new captions for" if is_upload(post) else "making"
+        await note(post_id, f"Rejected{f' (“{reason}”)' if reason else ''} → {what} version {post['attempt']}", by)
         spawn(generate(post_id))
     return post
 
@@ -366,15 +447,20 @@ async def _publish(post_id: str, from_statuses: list[str], retry_failed_only: bo
         only = None
         previous = (post.get("publish_results") or {}).get("channels", [])
         if retry_failed_only and previous:
-            only = [r["channel_id"] for r in previous if not r.get("ok")]
+            only = [r["channel_id"] for r in previous if not r.get("ok") and not r.get("skipped")]
         # a post with a publish time goes out now (its time has come); others follow PUBLISH_MODE
         mode = "shareNow" if post.get("scheduled_for") else None
-        result = await publisher.publish(post["captions"], post["final_image_url"], only, mode=mode)
+        result = await publisher.publish(post["captions"], post["final_image_url"], only, mode=mode,
+                                         media=(post.get("prefs") or {}).get("media"))
         if only:
             done = {r["channel_id"]: r for r in previous}
             done.update({r["channel_id"]: r for r in result["channels"]})
             result["channels"] = list(done.values())
-        oks = [r["ok"] for r in result["channels"]]
+        # a channel that can't take this kind of post (e.g. a video on Google Business) is skipped, not failed
+        oks = [r["ok"] for r in result["channels"] if not r.get("skipped")]
+        if not oks:
+            raise publisher.BufferError("None of the connected channels can take this post: "
+                                        + "; ".join(f"{r['label']}: {r['error']}" for r in result["channels"]))
         status = "published" if all(oks) else ("partly_published" if any(oks) else "publish_failed")
         post = await store.update_post(post_id, status=status, publish_results=result, error=None,
                                        published_at=_now() if any(oks) else None,
@@ -386,11 +472,14 @@ async def _publish(post_id: str, from_statuses: list[str], retry_failed_only: bo
                                        stage_note="Publishing failed")
     channels = (post.get("publish_results") or {}).get("channels", [])
     sent_to = ", ".join(f"{r['label']} ({r['name']})" for r in channels if r.get("ok"))
-    problems = "; ".join(f"{r['label']} ({r['name']}): {r.get('error')}" for r in channels if not r.get("ok"))
+    problems = "; ".join(f"{r['label']} ({r['name']}): {r.get('error')}" for r in channels
+                         if not r.get("ok") and not r.get("skipped"))
+    skipped = "; ".join(f"{r['label']} ({r['name']}): {r.get('error')}" for r in channels if r.get("skipped"))
     if (post.get("publish_results") or {}).get("dry_run"):
         sent_to += " [test mode: nothing was really posted]"
     await note(post_id, (f"Published to {sent_to}" if sent_to else "Publishing failed")
-               + (f" · problems: {problems}" if problems else "") + (f" · {post['error']}" if post.get("error") else ""))
+               + (f" · problems: {problems}" if problems else "") + (f" · {skipped}" if skipped else "")
+               + (f" · {post['error']}" if post.get("error") else ""))
     try:
         await emailer.send_published(post)
     except Exception:

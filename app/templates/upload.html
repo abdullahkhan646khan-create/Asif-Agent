@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Upload{% endblock %}
+{% block content %}
+<section class="card composer up-hero">
+  <div class="composer-head">
+    <div>
+      <span class="eyebrow">{{ icon("upload", 15) }} Your own media</span>
+      <h1>Post your own <em>photos or video</em></h1>
+      <p class="composer-sub">Upload it and the AI looks at it, then writes the title and a caption for every platform.
+        You approve it in the email, and only then is it published.</p>
+    </div>
+  </div>
+  <ol class="up-steps">
+    <li><b>1</b><span>Upload your photo or video</span></li>
+    <li><b>2</b><span>The AI checks it and writes</span></li>
+    <li><b>3</b><span>You approve by email</span></li>
+    <li><b>4</b><span>Buffer publishes it</span></li>
+  </ol>
+</section>
+
+<form id="up-form" class="up-grid" novalidate>
+  <section class="card up-main">
+    <h2 class="up-h"><span class="up-n">1</span> What are you posting?</h2>
+    <div class="kinds" role="radiogroup" aria-label="What are you posting?">
+      <label class="kind"><input type="radio" name="kind" value="image" checked>
+        <span class="kind-box"><span class="kind-ic">{{ icon("image", 24) }}</span><b>One photo</b>
+          <small>JPG, PNG, WebP or HEIC · up to {{ rules.max_image_mb }} MB</small></span></label>
+      <label class="kind"><input type="radio" name="kind" value="carousel">
+        <span class="kind-box"><span class="kind-ic">{{ icon("photos", 24) }}</span><b>Photo carousel</b>
+          <small>2 to {{ rules.max_images }} photos people swipe through</small></span></label>
+      <label class="kind"><input type="radio" name="kind" value="video">
+        <span class="kind-box"><span class="kind-ic">{{ icon("video", 24) }}</span><b>Video</b>
+          <small>MP4 or MOV · up to {{ rules.max_video_mb }} MB · {{ rules.min_seconds }} s to {{ (rules.max_seconds / 60)|int }} min</small></span></label>
+    </div>
+
+    <h2 class="up-h"><span class="up-n">2</span> <span id="add-title">Add your photo</span></h2>
+    <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose a file">
+      <input type="file" id="file" hidden>
+      <span class="drop-ic">{{ icon("upload", 28) }}</span>
+      <b id="drop-title">Drop your photo here, or tap to choose</b>
+      <small id="drop-sub">We check its size and shape, and fit it for Instagram when needed.</small>
+    </div>
+    <div class="previews" id="previews"></div>
+    <div class="vprev" id="vprev" hidden>
+      <video id="vplayer" controls playsinline preload="metadata"></video>
+      <div class="vside">
+        <div class="vfacts" id="vfacts"></div>
+        <div class="vcover">
+          <span class="lbl">Cover picture</span>
+          <img id="vcover" alt="Cover picture">
+          <button type="button" class="btn ghost" id="set-cover">{{ icon("image", 15) }} Use the current moment</button>
+          <small class="muted">Play or move the video to the moment you like, then press the button. Instagram and TikTok show it on your profile.</small>
+        </div>
+        <button type="button" class="btn ghost danger" id="vremove">{{ icon("x", 15) }} Remove video</button>
+      </div>
+    </div>
+
+    <h2 class="up-h"><span class="up-n">3</span> Tell the AI about it <span class="up-opt">(optional)</span></h2>
+    <textarea id="note" name="note" rows="3" maxlength="600" placeholder="What is it about? e.g. “Our team finished installing 24 HD cameras at a warehouse in Al Quoz.” The AI also looks at the photo or video itself."></textarea>
+    <div class="up-row">
+      <label>Service
+        <select name="service" id="service">
+          <option value="">Auto (the AI decides)</option>
+          {% for cat, items in brand.profile.services|groupby("category") %}
+          <optgroup label="{{ cat }}">{% for s in items %}<option value="{{ s.name }}">{{ s.name }}</option>{% endfor %}</optgroup>
+          {% endfor %}
+        </select>
+      </label>
+      <label>When to publish
+        <select id="when-mode">
+          <option value="now">Right after I approve it</option>
+          <option value="at">At a time I choose</option>
+        </select>
+      </label>
+      <label id="when-at-wrap" hidden>Date &amp; time (Dubai)
+        <input type="datetime-local" id="publish-at" min="{{ min_time }}">
+      </label>
+    </div>
+  </section>
+
+  <aside class="card up-side">
+    <h2 class="up-h">{{ icon("shield", 18) }} Checks</h2>
+    <ul class="checks" id="checks"></ul>
+    <h3 class="up-sub">Where it goes</h3>
+    <div class="dest" id="dest"></div>
+    <button type="submit" class="btn yellow big up-go" id="go" disabled>{{ icon("sparkle", 17) }} Write captions &amp; send for approval</button>
+    <div class="progress" id="progress" hidden><div class="bar"><i id="bar"></i></div><span id="progress-text"></span></div>
+    <p class="muted small up-safe">{{ icon("lock", 14) }} Nothing is published until you approve it in the email.</p>
+  </aside>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>const RULES = {{ rules|tojson }}; const CHANNELS_KNOWN = {{ channels_known|tojson }};</script>
+<script src="/static/upload.js"></script>
+{% endblock %}

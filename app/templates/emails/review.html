@@ -18,10 +18,22 @@
   {% endif %}
   <tr><td style="padding:22px 24px 6px;">
     <div style="font-size:21px;font-weight:bold;line-height:1.3;">{{ captions.title }}</div>
-    <div style="font-size:13px;color:#6B7280;margin-top:6px;">{% if post.idea.startswith("Auto: ") %}Topic picked by the agent: {{ post.idea[6:] }}{% else %}Your idea: “{{ post.idea }}”{% endif %}</div>
+    <div style="font-size:13px;color:#6B7280;margin-top:6px;">{% if media %}Your own {{ media_label }}{% if post.prefs.note %} · your note: “{{ post.prefs.note }}”{% endif %} · the AI wrote the title and captions
+      {% elif post.idea.startswith("Auto: ") %}Topic picked by the agent: {{ post.idea[6:] }}{% else %}Your idea: “{{ post.idea }}”{% endif %}</div>
   </td></tr>
   <tr><td style="padding:14px 24px;">
+    {% if media and media.kind == "video" %}<a href="{{ media.video.url }}" style="text-decoration:none;">{% endif %}
     <img src="cid:post" width="592" alt="Post image" style="width:100%;max-width:592px;height:auto;border-radius:10px;display:block;">
+    {% if media and media.kind == "video" %}</a>
+    <div style="margin-top:8px;font-size:14px;"><a href="{{ media.video.url }}" style="color:#3676C6;font-weight:bold;text-decoration:none;">▶ Watch the video</a>
+      <span style="color:#6B7280;"> · {{ clock(media.video.duration) }} · {{ media.video.width }}×{{ media.video.height }} · goes out as a Reel on Instagram</span></div>
+    {% endif %}
+    {% if more %}
+    <div style="margin-top:8px;font-size:12px;color:#6B7280;">{{ media["items"]|length }} photos in this order (swipe on Instagram):</div>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:6px;"><tr>
+      {% for cid in more %}<td style="padding:0 6px 6px 0;"><img src="cid:{{ cid }}" width="84" height="84" alt="" style="width:84px;height:84px;object-fit:cover;border-radius:8px;display:block;"></td>{% if loop.index % 6 == 0 %}</tr><tr>{% endif %}{% endfor %}
+    </tr></table>
+    {% endif %}
   </td></tr>
   <tr><td style="padding:6px 24px 18px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
@@ -31,7 +43,7 @@
       </td>
       {% endif %}
       <td width="50%" style="{{ 'padding-left:6px;' if not auto else 'padding-right:6px;' }}">
-        <a href="{{ reject_url }}" style="display:block;text-align:center;background:#DC2626;color:#ffffff;text-decoration:none;font-weight:bold;font-size:16px;padding:15px 10px;border-radius:10px;">❌ Reject &amp; Redo</a>
+        <a href="{{ reject_url }}" style="display:block;text-align:center;background:#DC2626;color:#ffffff;text-decoration:none;font-weight:bold;font-size:16px;padding:15px 10px;border-radius:10px;">❌ {% if media %}Rewrite the text{% else %}Reject &amp; Redo{% endif %}</a>
       </td>
       {% if auto %}
       <td width="50%" style="padding-left:6px;">
@@ -41,9 +53,10 @@
     </tr></table>
     <div style="font-size:12px;color:#6B7280;text-align:center;margin-top:8px;line-height:1.6;">
       {% if auto %}One tap. Reject makes a new version for the same time. Cancel means nothing is posted at this time.
-      {% else %}One tap: Approve {% if future %}schedules it for {{ when_label }} on{% else %}publishes it right away to{% endif %} {{ targets }}. Reject makes a new version and emails it to you.{% endif %}
+      {% else %}One tap: Approve {% if future %}schedules it for {{ when_label }} on{% else %}publishes it right away to{% endif %} {{ targets }}. {% if media %}Rewrite keeps your {{ media.kind == "video" and "video" or "photos" }} and writes new captions.{% else %}Reject makes a new version and emails it to you.{% endif %}{% endif %}
       <br>Reject because:
-      {% for code, label in [("image", "Different image"), ("text", "Too much text"), ("focus", "Wrong service"), ("headline", "Weak headline"), ("brand", "Not on brand")] %}
+      {% set reasons = [("text", "Too much text"), ("short", "Shorter captions"), ("tone", "Different tone"), ("focus", "Wrong service")] if media else [("image", "Different image"), ("text", "Too much text"), ("focus", "Wrong service"), ("headline", "Weak headline"), ("brand", "Not on brand")] %}
+      {% for code, label in reasons %}
         <a href="{{ reject_url }}&amp;r={{ code }}" style="color:#DC2626;text-decoration:underline;">{{ label }}</a>{% if not loop.last %} · {% endif %}
       {% endfor %}
       {% if when_label and not auto %}<br><a href="{{ cancel_url }}" style="color:#6B7280;">Skip this time (publish nothing)</a>{% endif %}
@@ -61,7 +74,7 @@
   </td></tr>
   {% endfor %}
   <tr><td style="padding:4px 24px 22px;font-size:12px;color:#6B7280;border-top:1px solid #EEF2F8;">
-    Layout: {{ brief.template }} · Service: {{ brief.service }} ·
+    {% if media %}Your {{ media_label }}{% else %}Layout: {{ brief.template }}{% endif %} · Service: {{ brief.service }} ·
     <a href="{{ dashboard_url }}" style="color:#3676C6;">Open in dashboard</a><br>
     These buttons only work for this version of the post.
   </td></tr>

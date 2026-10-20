@@ -989,3 +989,319 @@ def test_message_on_the_post_is_used_word_for_word(client):
     assert post["brief"]["template"] == "split" and post["brief"]["headline_top"] == "Fast, clean, tested"
 
     assert client.post("/api/posts", json={"idea": "x" * 10, "message": "y" * 151}).status_code == 400
+
+
+# ---------- the client's own photos and videos ----------
+
+vision_calls: list[tuple] = []
+
+
+async def fake_vision(system, text, pictures, temperature=0.3):
+    vision_calls.append((system, text, pictures))
+    assert 1 <= len(pictures) <= 3  # Groq's picture models take 3 at most
+    return {"what_we_see": "Two technicians in white safety helmets fix an HD camera on a warehouse wall.",
+            "visible_text": "", "service": "IP CCTV & AHD CCTV Systems", "angle": "Warehouses stay watched day and night.",
+            "quality": ""}, "fake/vision"
+
+
+def picture(w, h, color=(40, 90, 160), fmt="JPEG", mode="RGB") -> bytes:
+    from PIL import ImageDraw
+    img = Image.new(mode, (w, h), color if mode == "RGB" else (*color, 0))
+    ImageDraw.Draw(img).ellipse((w // 4, h // 4, w * 3 // 4, h * 3 // 4), fill=(250, 200, 60) if mode == "RGB" else (250, 200, 60, 255))
+    buf = io.BytesIO()
+    img.save(buf, fmt)
+    return buf.getvalue()
+
+
+def upload(client, kind, pictures=(), **fields):
+    files = [("images", (f"{n}.jpg", data, "image/jpeg")) for n, data in enumerate(pictures, 1)]
+    return client.post("/api/uploads", data={"kind": kind, **fields}, files=files or None)
+
+
+def test_pictures_are_made_ready_for_every_network():
+    from app import uploads
+    tall, info = uploads.prepare_picture(picture(1080, 1920))  # a 9:16 phone photo
+    img = Image.open(io.BytesIO(tall))
+    assert info["fitted"] and abs(img.width / img.height - 0.8) < 0.01  # soft background to Instagram's 4:5
+    assert img.width <= 1440 and img.height <= 1800 and len(tall) <= 1_000_000 and img.format == "JPEG"
+    wide, info = uploads.prepare_picture(picture(3000, 1000))
+    assert info["fitted"] and abs(Image.open(io.BytesIO(wide)).width / Image.open(io.BytesIO(wide)).height - 1.91) < 0.01
+    normal, info = uploads.prepare_picture(picture(1080, 1350))
+    assert not info["fitted"] and Image.open(io.BytesIO(normal)).size == (1080, 1350)
+    # a transparent PNG gets a white background, not a black one
+    png, _ = uploads.prepare_picture(picture(800, 800, fmt="PNG", mode="RGBA"))
+    assert Image.open(io.BytesIO(png)).convert("RGB").getpixel((5, 5))[0] > 240
+    # a phone photo stored sideways (EXIF orientation 6) is turned upright
+    side = Image.new("RGB", (1200, 900), (10, 20, 30))
+    exif = side.getexif()
+    exif[0x0112] = 6
+    buf = io.BytesIO()
+    side.save(buf, "JPEG", exif=exif)
+    _, info = uploads.prepare_picture(buf.getvalue())
+    assert info["original"] == [900, 1200]
+    # a carousel's later photos take the first photo's shape
+    _, info = uploads.prepare_picture(picture(1200, 1200), ratio=0.8)
+    assert info["ratio"] == 0.8 and info["fitted"]
+    with pytest.raises(uploads.UploadError, match="too small"):
+        uploads.prepare_picture(picture(200, 200))
+    with pytest.raises(uploads.UploadError, match="can't be opened"):
+        uploads.prepare_picture(b"not a picture")
+    # many photos reach the AI as at most 3 numbered contact sheets
+    assert len(uploads.pictures_for_ai([picture(600, 750)] * 10)) == 3
+    assert len(uploads.pictures_for_ai([picture(600, 750)] * 2)) == 2
+
+
+def test_own_photo_gets_ai_captions_email_and_is_published(client, monkeypatch):
+    monkeypatch.setattr(writer, "ask_vision_json", fake_vision)
+    vision_calls.clear()
+    prompts.clear()
+    sent.clear()
+    buffer_calls.clear()
+    r = upload(client, "image", [picture(1080, 1920)], note="Our team at a warehouse in Al Quoz")
+    assert r.status_code == 200, r.text
+    post = wait_for(client, r.json()["id"], ["pending_review", "failed"])
+    assert post["status"] == "pending_review", post["error"]
+    media, b = post["prefs"]["media"], post["brief"]
+    assert media["kind"] == "image" and media["items"][0]["fitted"] and post["final_image_url"] == media["items"][0]["url"]
+    assert b["template"] == "photo" and b["service"] == "IP CCTV & AHD CCTV Systems" and "white safety helmets" in b["what_we_see"]
+    assert "Al Quoz" in vision_calls[-1][1]  # the AI saw the note along with the photo
+    copy_system, copy_user = next((sy, u) for sy, u in prompts if "copywriter" in sy)
+    assert "OWN photo" in copy_system and "white safety helmets" in copy_user and "public title" in copy_system
+    assert "headline_top" not in copy_user  # no empty on-image fields sent to the copywriter
+    mail = sent[-1]
+    assert "Your own photo" in mail["html"] and "Rewrite the text" in mail["html"] and "Different image" not in mail["html"]
+    page = client.get(f"/posts/{post['id']}").text
+    assert "What the AI saw" in page and "Write new captions" in page and 'id="cap-title"' in page
+
+    # rejecting rewrites the text only: the photo and what the AI saw stay
+    client.post(f"/api/posts/{post['id']}/reject", json={"reason": "Shorter"})
+    again = wait_for(client, post["id"], ["pending_review", "failed"])
+    assert again["attempt"] == 2 and again["final_image_url"] == post["final_image_url"] and again["brief"] == post["brief"]
+    assert len(vision_calls) == 1  # the photo was not looked at twice
+
+    token = re.search(r"t=([0-9a-f]+)", links(sent[-1]["html"])["approve"]).group(1)
+    client.post(f"/review/{post['id']}", data={"action": "approve", "t": token})
+    assert get(client, post["id"])["status"] == "published"
+    ig = next(c for c in buffer_calls if c["channelId"] == "ig1")
+    assert ig["assets"] == [{"image": {"url": post["final_image_url"]}}]
+    assert ig["metadata"] == {"instagram": {"type": "post", "shouldShareToFeed": True}}
+    # it shows on the Posts page like any post
+    assert post["id"] in [p["id"] for p in client.get("/api/posts").json()]
+
+
+def test_carousel_upload_goes_out_as_one_post_with_all_photos(client, monkeypatch):
+    monkeypatch.setattr(writer, "ask_vision_json", fake_vision)
+    sent.clear()
+    buffer_calls.clear()
+    assert upload(client, "carousel", [picture(1080, 1350)]).status_code == 400  # a carousel needs 2+
+    assert upload(client, "carousel", [picture(800, 800)] * 11).status_code == 400  # Instagram's limit is 10
+    assert upload(client, "image", [picture(800, 800)] * 2).status_code == 400
+    bad = upload(client, "carousel", [picture(1080, 1350), b"broken"])
+    assert bad.status_code == 400 and "Picture 2" in bad.json()["detail"]
+    shapes = [picture(1080, 1350), picture(1200, 1200), picture(1920, 1080), picture(1080, 1350), picture(900, 1600)]
+    r = upload(client, "carousel", shapes)
+    assert r.status_code == 200, r.text
+    post = wait_for(client, r.json()["id"], ["pending_review", "failed"])
+    assert post["status"] == "pending_review", post["error"]
+    items = post["prefs"]["media"]["items"]
+    assert len(items) == 5 and {i["ratio"] for i in items} == {0.8}  # all photos take photo 1's shape
+    assert len(vision_calls[-1][2]) == 2  # 5 photos → 2 contact sheets
+    assert {"pic2", "pic3", "pic4", "pic5"} <= set(sent[-1]["inline"])  # the email shows every photo
+    assert "5 photos in this order" in sent[-1]["html"]
+    client.post(f"/api/posts/{post['id']}/approve")
+    post = get(client, post["id"])
+    assert post["status"] == "published"
+    by = {c["channelId"]: c for c in buffer_calls}
+    assert [a["image"]["url"] for a in by["ig1"]["assets"]] == [i["url"] for i in items]  # an Instagram carousel
+    assert len(by["x1"]["assets"]) == 4 and len(by["th1"]["assets"]) == 4  # X and Threads take 4 at most
+
+
+def video_bytes(size=6000):
+    return b"\x00\x00\x00\x18ftypmp42" + b"\x00" * size
+
+
+def send_video(client, name="clip.mp4", data=None, meta=None, poster=True):
+    data = video_bytes() if data is None else data
+    target = client.post("/api/uploads/video-target", json={"name": name, "size": len(data)})
+    if target.status_code != 200:
+        return target
+    t = target.json()
+    assert client.put(t["url"], content=data, headers=t["headers"]).status_code == 200
+    files = [("frames", (f"f{n}.jpg", picture(720, 1280), "image/jpeg")) for n in range(3)]
+    if poster:
+        files.append(("poster", ("cover.jpg", picture(720, 1280), "image/jpeg")))
+    meta = {"duration": 42.5, "width": 1080, "height": 1920, "codec": "h264", "name": name, "cover_ms": 2500, **(meta or {})}
+    return client.post("/api/uploads", data={"kind": "video", "video_path": t["path"], "video_meta": json.dumps(meta),
+                                             "note": "Night shift at the data centre"}, files=files)
+
+
+def test_own_video_is_checked_listened_to_and_published_as_a_reel(client, monkeypatch):
+    from app import pipeline
+    monkeypatch.setattr(writer, "ask_vision_json", fake_vision)
+    heard = []
+
+    async def fake_transcribe(data, filename):
+        heard.append(len(data))
+        return "We installed forty cameras this week and the client can watch every aisle from his phone."
+    monkeypatch.setattr(pipeline, "transcribe", fake_transcribe)
+    prompts.clear()
+    sent.clear()
+    buffer_calls.clear()
+    # checks before anything is stored
+    assert client.post("/api/uploads/video-target", json={"name": "clip.avi", "size": 100}).status_code == 400
+    too_big = client.post("/api/uploads/video-target", json={"name": "clip.mp4", "size": 51 * 1024 * 1024})
+    assert too_big.status_code == 400 and "50 MB" in too_big.json()["detail"]
+    fake = send_video(client, data=b"hello, this is a text file pretending" * 50)
+    assert fake.status_code == 400 and "not a real MP4" in fake.json()["detail"]
+    assert send_video(client, meta={"duration": 2}).status_code == 400  # Instagram Reels: 3 s at least
+    assert send_video(client, meta={"width": 200, "height": 300}).status_code == 400
+    assert send_video(client, poster=False).status_code == 400
+    assert client.post("/api/uploads", data={"kind": "video", "video_path": "../../etc/passwd", "video_meta": "{}"}).status_code == 400
+
+    r = send_video(client)
+    assert r.status_code == 200, r.text
+    post = wait_for(client, r.json()["id"], ["pending_review", "failed"])
+    assert post["status"] == "pending_review", post["error"]
+    media, b = post["prefs"]["media"], post["brief"]
+    assert media["video"]["duration"] == 42.5 and media["video"]["cover_ms"] == 2500 and len(media["frames"]) == 3
+    assert post["final_image_url"] == media["poster"]["url"] and b["template"] == "video"
+    assert heard and "forty cameras" in b["spoken_in_video"]
+    copy_system, copy_user = next((sy, u) for sy, u in prompts if "copywriter" in sy)
+    assert "OWN video" in copy_system and "Reel" in copy_system and "forty cameras" in copy_user
+    assert "Watch the video" in sent[-1]["html"] and media["video"]["url"] in sent[-1]["html"]
+    page = client.get(f"/posts/{post['id']}").text
+    assert "<video" in page and "Said in the video" in page
+
+    async def gql(query, variables=None):  # the client also connected Google Business and TikTok
+        if "organizations" in query or "channels" in query:
+            data = await fake_gql(query, variables)
+            if "channels" in data:
+                data["channels"] += [
+                    {"id": "gb1", "name": "Amanasoft", "service": "googlebusiness", "isQueuePaused": False, "isDisconnected": False, "isLocked": False},
+                    {"id": "tt1", "name": "amanasoft", "service": "tiktok", "isQueuePaused": False, "isDisconnected": False, "isLocked": False}]
+            return data
+        return await fake_gql(query, variables)
+    monkeypatch.setattr(publisher, "gql", gql)
+    client.post(f"/api/posts/{post['id']}/approve")
+    post = get(client, post["id"])
+    assert post["status"] == "published", post  # a skipped channel is not a failure
+    by = {c["channelId"]: c for c in buffer_calls}
+    assert "gb1" not in by  # Google Business takes no videos
+    gb = next(r for r in post["publish_results"]["channels"] if r["channel_id"] == "gb1")
+    assert gb["skipped"] and "doesn't take videos" in gb["error"]
+    assert by["ig1"]["metadata"] == {"instagram": {"type": "reel", "shouldShareToFeed": True}}
+    assert by["ig1"]["assets"] == [{"video": {"url": media["video"]["url"], "metadata": {"thumbnailOffset": 2500}}}]
+    assert by["fb1"]["assets"][0]["video"]["metadata"] == {"title": post["captions"]["title"][:100]}
+    assert len(by["tt1"]["text"]) <= 150 and by["tt1"]["metadata"]["tiktok"]["isAiGenerated"] is False
+    assert "Skipped" in sent[-1]["html"] and sent[-1]["subject"].startswith("✅ Published")
+
+
+def test_old_videos_are_removed_from_storage_after_a_week(client, monkeypatch):
+    from datetime import timedelta
+    from app import pipeline
+    from app.store import get_store
+    from app.timeutil import iso, now_utc
+    monkeypatch.setattr(writer, "ask_vision_json", fake_vision)
+    r = send_video(client)
+    post = wait_for(client, r.json()["id"], ["pending_review", "failed"])
+    store = get_store()
+    path = post["prefs"]["media"]["video"]["path"]
+    assert (store.media_dir / path).exists()
+    run(store.update_post(post["id"], status="published", published_at=iso(now_utc() - timedelta(days=3))))
+    assert run(pipeline.remove_old_videos()) == 0 and (store.media_dir / path).exists()  # too recent
+    run(store.update_post(post["id"], published_at=iso(now_utc() - timedelta(days=8))))
+    assert run(pipeline.remove_old_videos()) >= 1
+    after = get(client, post["id"])
+    assert not (store.media_dir / path).exists() and after["prefs"]["media"]["video"]["removed"]
+    assert (store.media_dir / after["prefs"]["media"]["poster"]["path"]).exists()  # the cover stays
+    assert "removed from storage" in client.get(f"/posts/{post['id']}").text
+
+
+def test_picture_ai_falls_back_to_gemini_then_to_the_note(monkeypatch):
+    from app import imagegen
+    from app.brand import load_brand
+    from app.llm import LLMError
+
+    async def no_vision(*a, **k):
+        raise LLMError("Groq is down")
+
+    async def gemini(prompt, pictures):
+        return '{"what_we_see": "A server room.", "service": "Structured Cabling", "angle": "Tidy racks."}', "B"
+
+    async def gemini_down(prompt, pictures):
+        raise imagegen.ImageGenError("cookies expired")
+    monkeypatch.setattr(writer, "ask_vision_json", no_vision)
+    monkeypatch.setattr(imagegen.pool, "describe", gemini)
+    media = {"kind": "image", "items": [{"thumb": "http://x/t.jpg"}]}
+    b = run(writer.make_upload_brief(load_brand(), media, [picture(400, 500)]))
+    assert b["_model"] == "gemini/B" and b["service"] == "Structured Cabling"
+    monkeypatch.setattr(imagegen.pool, "describe", gemini_down)
+    b = run(writer.make_upload_brief(load_brand(), media, [picture(400, 500)], note="New fiber backbone in JLT"))
+    assert b["what_we_see"] == "New fiber backbone in JLT"
+    with pytest.raises(LLMError, match="Press Retry"):
+        run(writer.make_upload_brief(load_brand(), media, [picture(400, 500)]))
+
+
+def test_silent_video_speech_is_ignored():
+    from app.llm import NOT_SPEECH
+    assert NOT_SPEECH.match("Thank you.") and NOT_SPEECH.match(" you ") and NOT_SPEECH.match("[Music]")
+    assert not NOT_SPEECH.match("Thank you for choosing Amanasoft for your new office network")
+
+
+def test_upload_page_shows_the_choices_and_channel_rules(client):
+    page = client.get("/upload")
+    assert page.status_code == 200
+    for text in ("One photo", "Photo carousel", "Video", "Write captions &amp; send for approval", "/static/upload.js"):
+        assert text in page.text, text
+    rules = json.loads(re.search(r"const RULES = (\{.*?\});", page.text).group(1))
+    assert rules["max_video_mb"] == 50 and rules["max_images"] == 10
+    assert {c["service"] for c in rules["channels"]} >= {"facebook", "instagram", "linkedin"}
+    assert 'href="/upload"' in client.get("/").text  # in the menu
+
+
+# ---------- the prompt assistant ----------
+
+def test_prompt_assistant_writes_ready_options(client, monkeypatch):
+    from app import assistant
+    from app.llm import LLMError
+    seen = []
+
+    async def fake(system, user, check=None, temperature=0.7):
+        seen.append((system, user))
+        data = {"reply": "Here are three ideas!", "options": [
+            {"title": "Night watch", "prompt": " ".join(["A modern warehouse at night with HD cameras"] * 4),
+             "message": "See every aisle. Day and night.", "service": "IP CCTV & AHD CCTV Systems"},
+            {"title": "Made up", "prompt": " ".join(["An engineer in a white safety helmet checks a camera"] * 3),
+             "message": "Smart security for your business", "service": "Rocket Science"},
+        ]}
+        problems = check(data)
+        assert "'Rocket Science' is not in the list" in " ".join(problems)  # the AI is asked to fix it
+        return data, "fake/model"
+    monkeypatch.setattr(assistant, "ask_json", fake)
+    home = client.get("/").text
+    assert 'id="ai-fab"' in home and "/static/assistant.js" in home
+    with TestClient(app) as anon:
+        assert 'id="ai-fab"' not in anon.get("/login").text  # only for the logged-in dashboard
+        assert anon.post("/api/assistant", json={"messages": [{"role": "user", "content": "hi"}]}).status_code == 401
+
+    chat = [{"role": "user", "content": "cctv post for warehouses"},
+            {"role": "assistant", "content": "Option 1 \"Night watch\": PROMPT: ... | MESSAGE: ..."},
+            {"role": "user", "content": "make it more luxury"}]
+    r = client.post("/api/assistant", json={"messages": chat})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["reply"] and len(data["options"]) == 2
+    assert data["options"][0]["service"] == "IP CCTV & AHD CCTV Systems" and data["options"][1]["service"] == ""  # unknown → Auto
+    assert all(len(o["message"]) <= 150 for o in data["options"])
+    system, user = seen[-1]
+    assert "CONVERSATION SO FAR" in user and "cctv post for warehouses" in user and "make it more luxury" in user
+    assert "white safety helmets" in system and "Structured Cabling" in system and "recent posts" in system
+
+    assert client.post("/api/assistant", json={"messages": []}).status_code == 400
+    assert client.post("/api/assistant", json={"messages": [{"role": "assistant", "content": "hi"}]}).status_code == 400
+
+    async def down(*a, **k):
+        raise LLMError("all models busy")
+    monkeypatch.setattr(assistant, "ask_json", down)
+    busy = client.post("/api/assistant", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert busy.status_code == 503 and "try again" in busy.json()["detail"]

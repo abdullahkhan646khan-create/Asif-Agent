@@ -35,6 +35,28 @@ On each post's page you can **Publish now**, **Change the time**, **Reject & red
 - **Safety:** opening the link alone does nothing. The tab sends the action from your browser, so email virus scanners that "pre-open" links can't publish anything.
 - **Old links** (for a post that was already published, rejected or cancelled) explain what happened instead of doing anything.
 
+## Your own photos and videos (Upload page)
+
+Three choices: **One photo**, **Photo carousel** (2 to 10 photos) or **Video** (MP4 or MOV).
+- **Checks before uploading:** size, shape, resolution, video length and codec, all against Buffer's limits
+  (`app/uploads.py`). The page also shows what each connected channel gets, for example a Reel on Instagram, a
+  carousel, "first 4 photos only", or "skipped" (Google Business takes no videos).
+- **Photos** are made ready for every network: upright, JPEG under 1 MB, and a soft blurred background when the
+  shape is outside Instagram's 4:5 to 1.91:1. In a carousel, every photo gets the first one's shape.
+- **Videos** go from the browser straight to storage, up to 50 MB (`MAX_VIDEO_MB`; Supabase's free plan limit). You
+  pick the cover frame. A week after a video post is published or cancelled, the video file is removed from storage
+  (the networks keep their copy).
+- **The AI looks at it:** Groq's `qwen/qwen3.8-27b` sees the photos or 3 video frames, Whisper listens to what is said
+  in a video (up to 25 MB), and Gemini is the backup. The copywriter then writes the title and a caption for every
+  connected platform.
+- **Then the usual flow:** approval email, then Buffer publishes it. **Rewrite the text** keeps your media and writes new captions.
+
+## Prompt assistant (Amana, the chat bubble)
+
+The animated robot at the bottom right of every page. Type an idea in any words. Amana answers with 3 different
+options, each a **Prompt**, a **Message on the post** and a **Service**, with **Copy**, **Copy all** and **Use this**
+(fills the Create post form). It only writes text: nothing is created or published from the chat (`app/assistant.py`).
+
 ## Daily schedule (Schedule page)
 
 - **Posting times:** set the times (Dubai) and days, e.g. 09:00, 13:00 and 19:00, Monday to Sunday.

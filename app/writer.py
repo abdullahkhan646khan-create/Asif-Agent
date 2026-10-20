@@ -6,7 +6,7 @@ import re
 from .brand import Brand
 from .composer import TEMPLATES
 from .config import get_settings
-from .llm import ask_json
+from .llm import LLMError, _extract_json, ask_json, ask_vision_json
 from .variety import POST_TYPES, brief_repeats, captions_repeat, recent_openings
 
 LAYOUTS = {
@@ -387,6 +387,84 @@ async def make_clean_brief(brand: Brand, idea: str, history: list[dict], feedbac
     return use_message(brief, message) if message.strip() else brief
 
 
+# ---------- the client's own photos and videos ----------
+
+UPLOAD_TEMPLATES = {"image": "photo", "carousel": "carousel", "video": "video"}
+
+
+def _look_system(brand: Brand, kind: str) -> str:
+    what = {"image": "a photo",
+            "carousel": "the photos of one carousel post",
+            "video": "frames from one video (from its beginning, middle and end)"}[kind]
+    if kind == "carousel":
+        seen = ("one short sentence per photo, in order (Photo 1: ..., Photo 2: ...): the subject, the people (what "
+                "they do and wear), objects and place")
+        how = ("\nThe photos are SEPARATE photos that people swipe through one by one. Several of them are shown "
+               "together on numbered contact sheets only so you can see them all; never call them a collage or a grid.")
+    elif kind == "video":
+        seen = "2-4 sentences: what the video shows overall: the subject, the people (what they do and wear), objects, place and mood"
+        how = ("\nThe pictures are SEPARATE frames taken at different moments of ONE video. Describe the video as a "
+               "whole; never call it a split screen or a collage.")
+    else:
+        seen = "2-4 sentences: the subject, the people (what they do and wear), objects, place and mood"
+        how = ""
+    return f"""You look at {what} that {brand.name} ({brand.company['type']} in Dubai) wants to post on its social media.
+Describe exactly what is visible, factually, so a copywriter can write the captions. Never guess brand names,
+places or facts you cannot see.{how}
+
+Reply with ONLY this JSON object:
+{{"what_we_see": "{seen}",
+  "visible_text": "readable words or logos in it, or empty",
+  "service": "the exact name of the service it clearly shows, from this list, otherwise General: {'; '.join(brand.service_names)}",
+  "angle": "one sentence: what a post about it could say for {brand.name}",
+  "quality": "empty if it is fine, otherwise a short note (blurry, very dark, cut-off faces, not suitable for business)"}}"""
+
+
+async def make_upload_brief(brand: Brand, media: dict, pictures: list[bytes], note: str = "",
+                            service: str | None = None, spoken: str = "") -> dict:
+    """What the AI sees in the client's photo(s) or video frames. Captions are then written from this."""
+    from .imagegen import pool
+    from .uploads import clock
+    kind = media["kind"]
+    user = f"CLIENT NOTE: {note}" if note else "CLIENT NOTE: (none)"
+    if kind == "carousel":
+        user += f"\nThe carousel has {len(media['items'])} photos, in this order."
+    if kind == "video":
+        v = media["video"]
+        shape = "vertical" if v["height"] > v["width"] else "horizontal" if v["width"] > v["height"] else "square"
+        user += f"\nVIDEO: {clock(v['duration'])} long, {shape}."
+        if spoken:
+            user += f"\nSPOKEN IN THE VIDEO (may be in another language): {spoken[:1200]}"
+    system = _look_system(brand, kind)
+    try:
+        data, used = await ask_vision_json(system, user, pictures)
+    except LLMError as first:
+        try:  # backup: Gemini (the picture accounts) can look at pictures too
+            text, slot = await pool.describe(f"{system}\n\n{user}", pictures)
+            data, used = _extract_json(text), f"gemini/{slot}"
+        except Exception as second:
+            if not note:
+                raise LLMError(f"The AI could not look at the {UPLOAD_TEMPLATES[kind]} right now (it is busy or "
+                               f"down). Press Retry in a minute. Details: {str(first)[:160]} | {str(second)[:100]}") from None
+            data, used = {"what_we_see": note, "angle": note}, "client note only (the AI could not look at it)"
+    svc = str(data.get("service") or "")
+    brief = {
+        "template": UPLOAD_TEMPLATES[kind], "media": kind,
+        "service": service if service and brand.service(service) else (svc if brand.service(svc) else "General"),
+        "angle": str(data.get("angle") or "").strip()[:300],
+        "what_we_see": str(data.get("what_we_see") or "").strip()[:900],
+        "visible_text": str(data.get("visible_text") or "").strip()[:200],
+        "headline_top": "", "headline_highlight": "", "subheadline": "", "benefits": [], "image_prompt": "",
+        "_quality": str(data.get("quality") or "").strip()[:200], "_model": used,
+        "_thumb": (media["poster"] if kind == "video" else media["items"][0])["thumb"],
+    }
+    if note:
+        brief["client_note"] = note
+    if spoken:
+        brief["spoken_in_video"] = spoken[:1200]
+    return brief
+
+
 def image_prompt(brand: Brand, brief: dict) -> str:
     v = brand.profile["visual"]
     if brief["template"] == "clean":
@@ -464,7 +542,7 @@ def _copy_keys(platforms: list[str]) -> list[str]:
 
 
 def _copy_system(brand: Brand, service: str | None = None, platforms: list[str] | None = None,
-                 mode: str = "brand", topic: str = "", industry: str | None = None) -> str:
+                 mode: str = "brand", topic: str = "", industry: str | None = None, media: str | None = None) -> str:
     platforms = platforms or get_settings().post_platform_list
     if mode == "demo":
         return f"""You write ONE sample caption for a DEMO post: a typical premium {industry} business in Dubai (never a
@@ -479,6 +557,8 @@ Reply with ONLY this JSON object:
     tags = brand.profile["hashtags"]
     pool = "; ".join(f"{k}: {' '.join(v)}" for k, v in tags["by_category"].items())
     rules = _platform_rules(brand)
+    if media == "video":  # Buffer: a TikTok video's text can be at most 150 characters
+        rules["tiktok"] = "MAXIMUM 140 characters for a TikTok video: a short hook and 2-4 hashtags."
     lines = "\n".join(f"- {p}: {rules[p]}" for p in platforms)
     if "threads" in platforms:
         lines += "\n- threads_topic: ONE topic for Threads, 1-3 words, no '#', no '&' or '.', max 40 characters."
@@ -493,9 +573,24 @@ Reply with ONLY this JSON object:
                  f"about exactly this topic, the client's own idea: {topic}\nStay on that topic; do not turn it into a "
                  f"different subject or a list of {brand.name} services.")
         kit = f"CONTACT DETAILS (use exactly): 📞 {c['phone']} · 🌐 {c['website']} · ✉️ {c['email']}"
+    elif mode == "upload":
+        thing = {"video": "video", "carousel": "carousel of photos"}.get(media, "photo")
+        intro = (f"You are the social media copywriter for {brand.name} ({brand.company['type']}). The client is posting "
+                 f"their OWN {thing}. Write the captions about exactly what it shows (what_we_see in the brief) and the "
+                 f"client's note" + (", and what is said in it (spoken_in_video)" if media == "video" else "")
+                 + ". Never describe people, places or things that are not in it, and never invent facts about it."
+                 + " Use what_we_see to stay accurate, but write real marketing captions about the work and its "
+                   "benefits for the customer: do not narrate or list what each photo or frame shows."
+                 + (" On Instagram the video is published as a Reel." if media == "video" else "")
+                 + (" People swipe through the photos one by one: never call them a collage or a grid."
+                    if media == "carousel" else ""))
+        kit = f"BRAND KIT\n{brand.context_text(all_services=False, focus=service)}"
     else:
         intro = f"You are the social media copywriter for {brand.name}. Write the captions for ONE post from a creative brief."
         kit = f"BRAND KIT\n{brand.context_text(all_services=False, focus=service)}"
+    title = ("- title: a catchy public title for this post, max 60 characters, no hashtags (it is the video title on "
+             "Facebook, the TikTok and Pinterest title, and the subject of the approval email)." if mode == "upload" else
+             "- title: short internal title for the approval email, max 60 characters.")
     return f"""{intro}
 Each platform gets its own caption, written in that platform's style (not the same text copied).
 
@@ -503,7 +598,7 @@ Each platform gets its own caption, written in that platform's style (not the sa
 
 PLATFORM RULES
 {lines}
-- title: short internal title for the approval email, max 60 characters.
+{title}
 - Hashtags always include {' '.join(tags['always'])}; pick the rest from: {pool}.
 - Contact details must be written exactly as above. Never write amanasoft.net.
 - Only use facts from the brand kit and the brief. Never invent numbers, prices, discounts, client names or awards.
@@ -512,9 +607,10 @@ Reply with ONLY this JSON object:
 {{{spec}}}"""
 
 
-def _check_copy(brand: Brand, platforms: list[str] | None = None):
+def _check_copy(brand: Brand, platforms: list[str] | None = None, limits: dict | None = None):
     phone_digits = re.sub(r"\D", "", brand.company["phone"])
     platforms = platforms or get_settings().post_platform_list
+    limits = limits or CAPTION_LIMITS
 
     def check(d: dict) -> list[str]:
         p = []
@@ -525,7 +621,7 @@ def _check_copy(brand: Brand, platforms: list[str] | None = None):
             x_len = x_length(str(d.get("x") or ""))
             if x_len > 270:
                 p.append(f"'x' is about {x_len} characters on X; it must be under 240. Make it shorter.")
-        for k, limit in CAPTION_LIMITS.items():
+        for k, limit in limits.items():
             if k in platforms and len(str(d.get(k) or "")) > limit:
                 p.append(f"'{k}' is {len(str(d[k]))} characters; max {limit}. Make it shorter.")
         if "instagram" in platforms and len(re.findall(r"#\w+", str(d.get("instagram") or ""))) > 30:
@@ -533,8 +629,8 @@ def _check_copy(brand: Brand, platforms: list[str] | None = None):
         for extra in (EXTRA_FIELDS[q] for q in platforms if q in EXTRA_FIELDS and EXTRA_FIELDS[q] != "threads_topic"):
             if not str(d.get(extra) or "").strip():
                 p.append(f"'{extra}' is missing")
-            elif len(str(d[extra])) > CAPTION_LIMITS[extra]:
-                p.append(f"'{extra}' is {len(str(d[extra]))} characters; max {CAPTION_LIMITS[extra]}")
+            elif len(str(d[extra])) > limits[extra]:
+                p.append(f"'{extra}' is {len(str(d[extra]))} characters; max {limits[extra]}")
         if "googlebusiness" in platforms:
             g = str(d.get("googlebusiness") or "")
             if re.search(r"\+?\d[\d\s-]{7,}\d", g):
@@ -580,8 +676,9 @@ def _fit_x(text: str) -> str:
 
 async def make_copy(brand: Brand, idea: str, brief: dict, plan: dict, history: list[dict],
                     feedback: dict | None = None, platforms: list[str] | None = None, mode: str = "brand",
-                    industry: str | None = None) -> dict:
-    public_brief = {k: v for k, v in brief.items() if not k.startswith("_") and k != "image_prompt"}
+                    industry: str | None = None, media: str | None = None) -> dict:
+    public_brief = {k: v for k, v in brief.items() if not k.startswith("_") and k != "image_prompt"
+                    and (v or mode != "upload")}  # an upload's brief has no on-image text: leave the empty fields out
     user = f"IDEA: {idea or '(none, use the brief)'}\n\nCREATIVE BRIEF: {json.dumps(public_brief, ensure_ascii=False)}"
     if plan.get("caption_style"):
         user += f"\n\nCAPTION STYLE for this post: {plan['caption_style']}."
@@ -597,11 +694,13 @@ async def make_copy(brand: Brand, idea: str, brief: dict, plan: dict, history: l
         user += f"\n\nThe previous version was rejected. Reason: {feedback['reason']}. Write clearly different captions."
 
     platforms = ["facebook"] if mode == "demo" else list(dict.fromkeys(["facebook", *(platforms or get_settings().post_platform_list)]))
-    base_check = _check_copy(brand, platforms)
+    limits = {**CAPTION_LIMITS, "tiktok": 150} if media == "video" else CAPTION_LIMITS
+    base_check = _check_copy(brand, platforms, limits)
     data, used, problems = {}, "", []
     for round_no in range(3):
         extra = ("\n\nYOUR LAST TRY REPEATED EARLIER POSTS:\n- " + "\n- ".join(problems)) if problems else ""
-        data, used = await ask_json(_copy_system(brand, brief.get("service"), platforms, mode, idea, industry), user + extra,
+        data, used = await ask_json(_copy_system(brand, brief.get("service"), platforms, mode, idea, industry, media),
+                                    user + extra,
                                     lambda d: base_check(d) or captions_repeat(d, history),
                                     temperature=0.75 + 0.05 * round_no)
         problems = captions_repeat(data, history)
@@ -610,7 +709,7 @@ async def make_copy(brand: Brand, idea: str, brief: dict, plan: dict, history: l
     out = {k: str(data.get(k) or "").strip() for k in _copy_keys(platforms)}
     if "x" in out:
         out["x"] = _fit_x(out["x"])
-    for k, limit in CAPTION_LIMITS.items():  # last resort only; the checks above ask the AI to shorten first
+    for k, limit in limits.items():  # last resort only; the checks above ask the AI to shorten first
         if k in out and len(out[k]) > limit:
             out[k] = out[k][:limit - 10].rsplit(" ", 1)[0] + "…"
     if "threads_topic" in out:
@@ -618,7 +717,8 @@ async def make_copy(brand: Brand, idea: str, brief: dict, plan: dict, history: l
     for k in ("tiktok_title", "pinterest_title"):
         if k in out:
             out[k] = re.sub(r"#\w+", "", out[k]).strip()[:CAPTION_LIMITS[k]]
-    out["title"] = out["title"][:80] or f"{brief['headline_top']} {brief['headline_highlight']}"
+    out["title"] = (out["title"][:80] or f"{brief['headline_top']} {brief['headline_highlight']}".strip()
+                    or str(brief.get("angle") or "New post")[:60])
     out["_model"] = used
     if problems:
         out["_variety_warning"] = problems

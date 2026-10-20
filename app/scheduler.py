@@ -145,9 +145,16 @@ async def prepare_due(now: datetime | None = None) -> list[dict]:
     return made
 
 
+_cleanup = {"last": None}
+
+
 async def tick(now: datetime | None = None) -> None:
     await prepare_due(now)
     await pipeline.publish_due(now)
+    current = now or now_utc()
+    if _cleanup["last"] is None or current - _cleanup["last"] >= timedelta(hours=1):
+        _cleanup["last"] = current
+        await pipeline.remove_old_videos(current)
 
 
 async def loop() -> None:

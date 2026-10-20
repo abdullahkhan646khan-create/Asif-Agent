@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # Text AI: Groq first, OpenRouter as backup
     groq_api_key: str = ""
     groq_models: str = "openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b"
+    # models that can look at pictures (for the client's own photos and videos); up to 3 pictures per request
+    groq_vision_models: str = "qwen/qwen3.8-27b,meta-llama/llama-4-scout-17b-16e-instruct"
+    groq_whisper_model: str = "whisper-large-v3-turbo"  # listens to what is said in an uploaded video
     openrouter_api_key: str = ""
     openrouter_models: str = "openrouter/free,google/gemma-4-31b-it:free"
 
@@ -54,6 +57,8 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_service_key: str = ""
     supabase_bucket: str = "posts"
+    # largest video the client can upload. Supabase's free plan stores files up to 50 MB; raise it on a paid plan.
+    max_video_mb: int = 50
 
     # Buffer
     buffer_api_key: str = ""
@@ -78,6 +83,10 @@ class Settings(BaseSettings):
     @property
     def groq_model_list(self) -> list[str]:
         return [m.strip() for m in self.groq_models.split(",") if m.strip()]
+
+    @property
+    def groq_vision_model_list(self) -> list[str]:
+        return [m.strip() for m in self.groq_vision_models.split(",") if m.strip()]
 
     @property
     def openrouter_model_list(self) -> list[str]:
