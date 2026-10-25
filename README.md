@@ -35,6 +35,20 @@ On each post's page you can **Publish now**, **Change the time**, **Reject & red
 - **Safety:** opening the link alone does nothing. The tab sends the action from your browser, so email virus scanners that "pre-open" links can't publish anything.
 - **Old links** (for a post that was already published, rejected or cancelled) explain what happened instead of doing anything.
 
+## Layouts (12 brand layouts + Simple photo)
+
+- **Layouts:** Blue wave, Dark photo, Dubai night, Diagonal split, Benefit cards, White card, and the modern Glass,
+  Editorial, Arch, Bold band, Corporate and Neon tech (`app/composer.py`). **Auto** rotates them. A typed prompt
+  about one of the services gets a brand layout (headline, highlighted words, sub-line, 3 benefits, contact bar). A
+  prompt about something else (a limousine, a greeting) gets **Simple photo**, which can also be picked by hand.
+- **The client's message** is the big headline, word for word ("Your safety," + big "our priority").
+- **Text never covers a face** (`app/faces.py`, OpenCV's YuNet face model). Each layout knows where its text, cards
+  and logo sit, and the photo is placed so faces stay free. A layout that can't keep a face free is swapped for one
+  that can, and the post's activity says so.
+- **Try other layouts:** on a post waiting for approval (dashboard, or the button in the email), the same picture and
+  text are shown in every layout. Tap one and the post is redrawn, with no new picture and no AI call, and a new
+  approval email follows.
+
 ## Your own photos and videos (Upload page)
 
 Three choices: **One photo**, **Photo carousel** (2 to 10 photos) or **Video** (MP4 or MOV).

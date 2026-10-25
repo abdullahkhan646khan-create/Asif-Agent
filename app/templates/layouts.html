@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Try other layouts{% endblock %}
+{% block content %}
+{# Opened from the approval email (protected by its signed link). Nothing changes until a layout is tapped. #}
+<div class="card stack notice-card" style="max-width:860px;margin:0 auto;text-align:left">
+  <img src="/brand-assets/logo/logo-main-original.png" alt="{{ brand.name }}" class="notice-logo" style="margin:0">
+  <h1 style="font-size:22px;margin:6px 0 0">Try other layouts</h1>
+  <p class="muted" style="margin:0">Same picture and text, in every layout. Tap one to use it: a new email with that
+    version arrives in about a minute, and you approve it there. Greyed out = it would cover a face in this picture.</p>
+  <div class="layout-grid">
+    {% for l in layouts %}
+    <form method="post" action="/review/{{ post.id }}" style="margin:0">
+      <input type="hidden" name="action" value="layouts">
+      <input type="hidden" name="t" value="{{ token }}">
+      <input type="hidden" name="layout" value="{{ l.key }}">
+      <button class="layout-opt{{ ' on' if l.current }}{{ ' covers' if l.covers_face }}" style="width:100%"
+              {{ 'disabled' if l.current or l.covers_face }}>
+        <span class="layout-img"><img src="/review/{{ post.id }}/layout/{{ l.key }}.jpg?t={{ token }}" alt="" loading="lazy"
+              decoding="async" onerror="this.closest('.layout-opt').classList.add('noimg')"></span>
+        <span class="layout-name">{{ l.name }}{% if l.current %} · current{% elif l.covers_face %} · covers a face{% endif %}</span>
+      </button>
+    </form>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.querySelectorAll(".layout-grid form").forEach((f) => f.addEventListener("submit", () => {
+  document.querySelectorAll(".layout-opt").forEach((b) => (b.disabled = true));  // one tap only
+}));
+</script>
+{% endblock %}

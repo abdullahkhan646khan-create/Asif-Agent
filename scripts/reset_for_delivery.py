@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.config import get_settings  # noqa: E402
 
 WORKING = {"queued", "writing", "imaging", "designing", "emailing", "publishing"}
-TEST_SETTINGS = ("events_", "alert_sent_", "schedule_slots_done")  # setting keys that belong to old posts
+TEST_SETTINGS = ("events_", "alert_sent_", "schedule_slots_done", "alts_")  # setting keys that belong to old posts
 
 
 def main():

@@ -25,6 +25,7 @@ from .config import get_settings
 from .security import review_link
 from .store import get_store
 from .timeutil import fmt, now_utc, parse
+from .composer import LAYOUT_NAMES
 from .uploads import clock, media_label
 
 log = logging.getLogger("email")
@@ -176,6 +177,8 @@ async def send_review(post: dict, image_bytes: bytes):
         "when_label": fmt(when) if when else None, "auto": auto, "future": future,
         "targets": await publisher.target_label(),
         "media": media, "media_label": media_label(media) if media else None, "more": more,
+        "layouts_url": review_link(post, "layouts") if not media and not auto else None,
+        "layout_name": LAYOUT_NAMES.get((post.get("brief") or {}).get("template"), ""),
         "clock": clock,
     }
     html = env.get_template("review.html").render(**ctx)

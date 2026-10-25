@@ -10,8 +10,6 @@
       <p class="composer-sub">Type an idea, or leave it empty: the agent writes it, designs it and emails it to you for approval.</p>
     </div>
   </div>
-  {% set layout_names = {"wave": "Blue wave", "spotlight": "Dark photo", "skyline": "Dubai night",
-                         "split": "Diagonal split", "cards": "Benefit cards", "frame": "White card"} %}
   <form id="new-post">
     <div class="field-label" style="margin-top:20px">Prompt</div>
     <textarea id="idea" name="idea" class="prompt-box" placeholder="What is the post about? The picture is made from this. e.g. “A black luxury car in front of the Burj Khalifa at night” or “CCTV for warehouses”. Leave it empty and the agent picks a fresh topic."></textarea>
@@ -46,11 +44,13 @@
     </div>
     <div class="field-label">Design</div>
     <div class="chips" role="radiogroup" aria-label="Layout">
-      <label><input type="radio" name="template" value="" checked><span>Auto layout</span></label>
-      {% for t in layouts %}<label><input type="radio" name="template" value="{{ t }}"><span>{{ layout_names.get(t, t) }}</span></label>{% endfor %}
+      <label><input type="radio" name="template" value="" checked><span>✨ Auto (AI picks)</span></label>
+      {% for t in layouts %}<label><input type="radio" name="template" value="{{ t }}"><span>{{ LAYOUT_NAMES.get(t, t) }}</span></label>{% endfor %}
+      <label><input type="radio" name="template" value="clean"><span>Simple photo</span></label>
     </div>
     <div class="foot">
       <span class="hint">{{ icon("info", 15) }}<span>Everything on Auto = a fresh topic that hasn't been posted before. About 1–2 minutes, then an email to approve.
+        Text never covers a face, and after the post is made you can try it in any other layout.
         Daily automatic posts: <a href="/schedule">Schedule</a>.</span></span>
       <button class="btn yellow big" id="go">{{ icon("sparkle", 17) }} Create post</button>
     </div>

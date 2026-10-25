@@ -36,7 +36,28 @@ LAYOUTS = {
              "subheadline and 3 benefit tags. Good for industry use cases, tips and customer-focused messages. Photo "
              "composition: the main subject is in the upper half of the image; the lower half is calm and simple "
              "(desk, floor, wall or a soft blurred background), because a white card covers it.",
+    "glass": "Modern premium look: the photo fills the post and a frosted-glass panel in the lower half carries the "
+             "headline, subheadline and 3 benefit pills. Good for any service and brand messages. Photo composition: "
+             "the main subject (person or equipment) is in the upper half; the lower half is calm (floor, desk, "
+             "wall or a soft background), because the glass panel covers it.",
+    "editorial": "Bold magazine look: a big headline on deep navy at the top, the photo as a wide rounded card below. "
+                 "Good for strong statements, announcements and problem/solution posts. Photo composition: a wide "
+                 "landscape scene with the main subject in the middle and upper part; the bottom strip is calm.",
+    "arch": "Light premium look: the photo in a tall arch on the right, the headline and a list of 3 benefits on the "
+            "left. Good for people at work, services and customer stories. Photo composition: a tall portrait "
+            "picture with the main subject (person or equipment) in the centre, filling it from top to bottom.",
+    "band": "Energetic look: the photo fills the upper part and a bold angled colour band across the lower part "
+            "carries the headline. Good for offers of a service, launches and calls to action. Photo composition: "
+            "the main subject is in the upper half; the lower 40% is calm because the band covers it.",
+    "corporate": "Clean LinkedIn style: light background, a wide rounded photo on top, the headline and 3 benefit cards "
+                 "below. Good for professional, business-to-business posts. Photo composition: a wide landscape "
+                 "scene with the main subject in the centre or right; the top-left corner is calm (logo there).",
+    "neon": "Dark high-tech look: glowing circuit lines and the photo in a circle with a glowing ring. Good for AI, "
+            "cyber security, networks and data posts. Photo composition: a square picture with one clear subject "
+            "in the centre (server, device, person or glowing technology) and nothing important in the corners.",
 }
+PHOTO_SHAPE = {"skyline": "portrait 4:5", "glass": "portrait 4:5", "band": "portrait 4:5", "arch": "portrait 1:2",
+               "editorial": "landscape 3:2", "corporate": "landscape 3:2"}  # the others: square 1:1
 
 # Promises the brand can't back up: guarantees, perfection, awards, unconfirmed counts ("20 years", "500 clients").
 UNSUPPORTED = re.compile(
@@ -54,8 +75,10 @@ def unsupported_claims(texts) -> list[str]:
 LIMITS = {"headline_top": 32, "headline_highlight": 18, "subheadline": 80, "body": 190, "benefit": 20}
 # the AI is asked for a little less than the real limit, so it rarely goes over and nothing has to be cut
 AIM = {**LIMITS, "headline_top": 30, "subheadline": 70, "body": 170}
-NEEDS_BENEFITS = ("wave", "spotlight", "skyline", "split", "cards", "frame")
-NEEDS_SUBHEADLINE = ("wave", "spotlight", "split", "cards", "frame")
+NEEDS_BENEFITS = ("wave", "spotlight", "skyline", "split", "cards", "frame",
+                  "glass", "editorial", "arch", "band", "corporate", "neon")
+NEEDS_SUBHEADLINE = ("wave", "spotlight", "split", "cards", "frame",
+                     "glass", "editorial", "arch", "band", "corporate", "neon")
 
 
 # ---------- step 1: creative director ----------
@@ -244,6 +267,9 @@ async def make_brief(brand: Brand, idea: str, plan: dict, history: list[dict],
     """Write the brief; if it repeats an earlier post, write it again (up to 3 rounds)."""
     base_check = _check_brief(brand)
     user = _director_user(idea, plan, history, feedback)
+    if message.strip():
+        user += (f"\n\nTEXT ON THE POST (the client's own words, used word for word as the headline): "
+                 f"\"{message.strip()}\". Write the subheadline and benefits to support it.")
     # the planned service's details only help when it is really this post's service
     focus = plan["service"] if plan["service_source"] == "user" or not idea else None
     brief, used, problems = None, "", []
@@ -260,10 +286,12 @@ async def make_brief(brand: Brand, idea: str, plan: dict, history: list[dict],
         if not problems:
             break
     brief["_model"] = used
+    if plan.get("service_source") == "user" and brand.service(plan["service"]):
+        brief["service"] = plan["service"]  # the service the client picked in the form, always
     brief["_plan"] = {**plan, "service": brief["service"] if brief["service"] != "General" else plan["service"]}
     if problems:
         brief["_variety_warning"] = problems
-    return use_message(brief, message) if message.strip() else brief
+    return use_message(brief, message, branded=True) if message.strip() else brief
 
 
 CLEAN_LIMITS = {"headline_top": 40, "headline_highlight": 24, "subheadline": 72}
@@ -324,8 +352,40 @@ def split_message(message: str) -> tuple[str, str]:
     return text[:cut].strip(), text[cut:].strip()
 
 
-def use_message(brief: dict, message: str) -> dict:
-    """Put the client's message on the picture, word for word."""
+JOINERS = {"&", "and", "or", "of", "for", "to", "in", "on", "with", "by", "at"}
+EMOJI = re.compile(r"[\U0001F000-\U0001FFFF\u2600-\u27BF\uFE0F]")
+
+
+def message_headline(message: str) -> tuple[str, str, str]:
+    """The client's message for the branded layouts, word for word: (headline_top, headline_highlight, subheadline).
+    The first sentence is the headline and its last words are the big highlighted part ("Your safety," +
+    "our priority"); the rest is the subheadline. Emoji are left out (the poster font can't draw them)."""
+    text = re.sub(r"[ \t]+", " ", EMOJI.sub("", message)).strip()
+    if "\n" in text:
+        head, line = text.split("\n", 1)
+    else:  # the first sentence is the headline; one long sentence stays whole (the layouts give it 3 lines)
+        m = re.search(r"(?<=[.!?:])\s+|\s[–—-]\s", text)
+        head, line = (text[:m.start()], text[m.end():]) if m and text[m.end():].strip() else (text, "")
+    head, line = " ".join(head.split()), " ".join(line.split())
+    if "," in head.rstrip(","):
+        top, hi = head.rsplit(",", 1)
+        return top.strip() + ",", hi.strip(), line
+    words = head.split()
+    if len(words) < 2:
+        return head, "", line
+    k = 1 if len(words) <= 3 else 2
+    while k < len(words) - 1 and words[-k].lower() in JOINERS:  # never a big "& Infrastructure" or "for business"
+        k += 1
+    return " ".join(words[:-k]), " ".join(words[-k:]), line
+
+
+def use_message(brief: dict, message: str, branded: bool = False) -> dict:
+    """Put the client's message on the picture, word for word. Branded layouts show it as headline + big
+    highlighted words (+ the rest as the subheadline, or the AI's subheadline when the message is one sentence)."""
+    if branded:
+        top, hi, line = message_headline(message)
+        return {**brief, "headline_top": top, "headline_highlight": hi, "subheadline": line or brief.get("subheadline", ""),
+                "_message": message.strip()}
     head, line = split_message(message)
     return {**brief, "headline_top": head, "headline_highlight": "", "subheadline": line, "_message": message.strip()}
 
@@ -477,7 +537,7 @@ def image_prompt(brand: Brand, brief: dict) -> str:
         )
     composition = LAYOUTS[brief["template"]].split("Photo composition:")[1].strip()
     avoid = ", ".join(v["avoid_in_images"])
-    shape = "portrait 4:5" if brief["template"] == "skyline" else "square 1:1"
+    shape = PHOTO_SHAPE.get(brief["template"], "square 1:1")
     return (
         f"Generate a photo. {brief['image_prompt'].strip()}\n\n"
         f"Style: {v['photo_style_prompt']}.\n"

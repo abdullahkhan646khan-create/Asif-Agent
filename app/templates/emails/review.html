@@ -61,6 +61,11 @@
       {% endfor %}
       {% if when_label and not auto %}<br><a href="{{ cancel_url }}" style="color:#6B7280;">Skip this time (publish nothing)</a>{% endif %}
     </div>
+    {% if layouts_url %}
+    <div style="text-align:center;margin-top:14px;">
+      <a href="{{ layouts_url }}" style="display:inline-block;background:#EEF3FB;color:#1F3566;text-decoration:none;font-weight:bold;font-size:14px;padding:11px 18px;border-radius:10px;">🎨 Try other layouts (same picture)</a>
+    </div>
+    {% endif %}
   </td></tr>
   {% for label, key, count, limit in platforms %}
   <tr><td style="padding:0 24px 16px;">
@@ -74,7 +79,7 @@
   </td></tr>
   {% endfor %}
   <tr><td style="padding:4px 24px 22px;font-size:12px;color:#6B7280;border-top:1px solid #EEF2F8;">
-    {% if media %}Your {{ media_label }}{% else %}Layout: {{ brief.template }}{% endif %} · Service: {{ brief.service }} ·
+    {% if media %}Your {{ media_label }}{% else %}Layout: {{ layout_name or brief.template }}{% endif %} · Service: {{ brief.service }} ·
     <a href="{{ dashboard_url }}" style="color:#3676C6;">Open in dashboard</a><br>
     These buttons only work for this version of the post.
   </td></tr>

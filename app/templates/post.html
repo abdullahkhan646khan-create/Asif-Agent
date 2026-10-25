@@ -118,6 +118,23 @@
       {% endif %}
     </div>
 
+    {% if layouts %}
+    <div class="card" id="layouts">
+      <h3 class="card-title">{{ icon("layers", 17) }} Try other layouts</h3>
+      <p class="muted small" style="margin:-6px 0 14px">Same picture and text. Tap one to use it: the post is redrawn and a new approval email is sent.</p>
+      <div class="layout-grid">
+        {% for l in layouts %}
+        <button type="button" class="layout-opt{{ ' on' if l.current }}{{ ' covers' if l.covers_face }}" data-layout="{{ l.key }}"
+                {{ 'disabled' if l.current or l.covers_face }} title="{{ 'Covers a face in this picture' if l.covers_face else l.name }}">
+          <span class="layout-img"><img src="/posts/{{ post.id }}/layout/{{ l.key }}.jpg" alt="" loading="lazy" decoding="async"
+                onerror="this.closest('.layout-opt').classList.add('noimg')"></span>
+          <span class="layout-name">{{ l.name }}{% if l.current %} · current{% elif l.covers_face %} · covers a face{% endif %}</span>
+        </button>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
     {% if events %}
     <div class="card">
       <h3 class="card-title">{{ icon("activity", 17) }} Activity</h3>
@@ -177,7 +194,7 @@
       </dl>
       {% else %}
       <dl class="kv">
-        <dt>Layout</dt><dd>{{ b.template }}</dd>
+        <dt>Layout</dt><dd>{{ LAYOUT_NAMES.get(b.template, b.template) }}{% if b._faces %} · {{ b._faces|length }} face{{ 's' if b._faces|length > 1 }} found, kept free of text{% endif %}</dd>
         <dt>Service</dt><dd>{{ b.service }}</dd>
         <dt>Angle</dt><dd>{{ b.angle }}</dd>
         <dt>On the image</dt><dd>{{ b.headline_top }} <b>{{ b.headline_highlight }}</b>{% if b.subheadline %} · {{ b.subheadline }}{% endif %}{% if b.body %} · {{ b.body }}{% endif %}</dd>
@@ -198,6 +215,20 @@
 {% block scripts %}
 <script>
 document.getElementById("badge").innerHTML = badge({{ post.status|tojson }});
+document.getElementById("layouts")?.addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-layout]");
+  if (!b || b.disabled) return;
+  document.querySelectorAll(".layout-opt").forEach((x) => (x.disabled = true));
+  b.classList.add("busy");
+  try {
+    await api("POST", "/api/posts/{{ post.id }}/layout", { layout: b.dataset.layout });
+    toast("Changing the layout… a new approval email follows.");
+    setTimeout(() => location.reload(), 900);
+  } catch (err) {
+    toast(err.message, true);
+    setTimeout(() => location.reload(), 1500);
+  }
+});
 document.getElementById("car-strip")?.addEventListener("click", (e) => {  // carousel: show the photo that was tapped
   const b = e.target.closest("button[data-src]");
   if (!b) return;

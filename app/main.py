@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import importlib.util
 import logging
 import os
 import re
@@ -16,7 +17,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import assistant, emailer, pipeline, publisher, scheduler, uploads
 from .brand import load_brand
-from .composer import TEMPLATES
+from .composer import LAYOUT_NAMES, TEMPLATES
 from .config import ROOT, get_settings
 from .imagegen import pool
 from .industries import INDUSTRIES
@@ -140,6 +141,7 @@ templates.env.filters["dubai"] = fmt
 templates.env.filters["dubai_time"] = lambda v: fmt(v, date=False)
 templates.env.filters["local_input"] = to_local_input
 templates.env.globals["static_url"] = static_url
+templates.env.globals["LAYOUT_NAMES"] = LAYOUT_NAMES
 templates.env.filters["media_label"] = uploads.media_label
 templates.env.filters["clock"] = uploads.clock
 
@@ -181,6 +183,7 @@ async def health(request: Request):
     source = request.query_params.get("from")
     LAST_VISIT[source if source in LAST_VISIT else "other"] = iso(now_utc())
     info = {"version": os.environ.get("RENDER_GIT_COMMIT", "local")[:7], "awake_since": iso(STARTED_AT),
+            "face_check": importlib.util.find_spec("cv2") is not None,  # OpenCV installed (not loaded here)
             "heartbeat": HEARTBEAT, "last_visit": LAST_VISIT}
     try:
         await get_store().ping()
@@ -233,7 +236,9 @@ async def post_page(request: Request, post_id: str):
                 min_time=to_local_input(now_utc() + timedelta(minutes=5)),
                 can=dict(reject=post["status"] in pipeline.CAN_REJECT, cancel=post["status"] in pipeline.CAN_CANCEL,
                          publish_now=post["status"] in pipeline.CAN_PUBLISH_NOW,
-                         reschedule=post["status"] in pipeline.CAN_RESCHEDULE))
+                         reschedule=post["status"] in pipeline.CAN_RESCHEDULE,
+                         switch_layout=pipeline.can_switch_layout(post)),
+                layouts=pipeline.layout_options(post) if pipeline.can_switch_layout(post) else [])
 
 
 def is_demo(post: dict) -> bool:
@@ -307,7 +312,7 @@ async def api_create(request: Request, body: NewPost):
         raise HTTPException(400, "Write a bit more about the idea, or leave it empty for a fresh topic")
     if len(body.message.strip()) > 150:
         raise HTTPException(400, "Keep the message on the post short: at most 150 characters")
-    template = body.template if body.template in TEMPLATES else None
+    template = body.template if body.template in TEMPLATES or body.template == "clean" else None
     post_type = body.post_type if body.post_type in POST_TYPES else None
     when = future_time(body.publish_at)
     return await pipeline.create(body.idea, template, body.service or None, post_type, scheduled_for=when,
@@ -453,6 +458,38 @@ async def api_approve(request: Request, post_id: str):
     return post
 
 
+class NewLayout(BaseModel):
+    layout: str
+
+
+@app.post("/api/posts/{post_id}/layout")
+async def api_layout(request: Request, post_id: str, body: NewLayout):
+    """Same picture and text in another layout; a new approval email follows."""
+    require_api_login(request)
+    post = await pipeline.switch_layout(post_id, body.layout)
+    if not post:
+        raise HTTPException(409, "The layout can only be changed while the post is waiting for approval")
+    return post
+
+
+async def _preview_response(post: dict | None, layout: str):
+    if not post or layout not in pipeline.ALL_LAYOUTS or not pipeline.can_preview(post):
+        raise HTTPException(404)
+    try:
+        url = await pipeline.layout_preview(post, layout)
+    except Exception:
+        log.exception("Layout preview %s for %s failed", layout, post["id"])
+        raise HTTPException(503, "This preview could not be made") from None
+    return RedirectResponse(url, status_code=302)
+
+
+@app.get("/posts/{post_id}/layout/{layout}.jpg")
+async def layout_preview(request: Request, post_id: str, layout: str):
+    if not logged_in(request):
+        raise HTTPException(401)
+    return await _preview_response(await get_store().get_post(post_id), layout)
+
+
 @app.post("/api/posts/{post_id}/publish-now")
 async def api_publish_now(request: Request, post_id: str):
     require_api_login(request)
@@ -533,7 +570,7 @@ async def api_save_schedule(request: Request):
 async def handled_text(post: dict, action: str) -> str:
     """Plain words for 'this email button can't do that anymore', saying what already happened."""
     st = post["status"]
-    verb = {"approve": "approved", "reject": "rejected", "cancel": "cancelled"}[action]
+    verb = {"approve": "approved", "reject": "rejected", "cancel": "cancelled", "layouts": "changed"}[action]
     when = parse(post.get("scheduled_for"))
     last = (await pipeline.events(post["id"]) or [{}])[-1]
     last_txt = f" Last step: {last.get('what')} ({last.get('by')}, {fmt(last.get('at'))})." if last.get("what") else ""
@@ -555,6 +592,7 @@ async def handled_text(post: dict, action: str) -> str:
 
 REVIEW_ALLOWED = {
     "approve": ["pending_review"],
+    "layouts": ["pending_review"],  # "Try other layouts" from the email
     "reject": ["pending_review", "scheduled", "missed"],
     "cancel": ["pending_review", "scheduled", "missed"],
 }
@@ -592,6 +630,8 @@ async def review_page(request: Request, post_id: str, action: str, t: str, r: st
         await pipeline.note(post_id, f"Email “{action}” link opened, but the post was already {post['status'].replace('_', ' ')}",
                             "email link")
         return page(request, "message.html", title="Already handled", text=await handled_text(post, action), post=post)
+    if action == "layouts":  # a page of previews; nothing changes until a layout is tapped
+        return page(request, "layouts.html", post=post, token=t, layouts=pipeline.layout_options(post))
     when = parse(post.get("scheduled_for"))
     future = bool(when and when > now_utc() + timedelta(minutes=1))
     label = {
@@ -603,9 +643,19 @@ async def review_page(request: Request, post_id: str, action: str, t: str, r: st
                 reason=QUICK_REASONS.get(r, ""))
 
 
+@app.get("/review/{post_id}/layout/{layout}.jpg")
+async def review_layout_preview(post_id: str, layout: str, t: str):
+    """The previews on the email's "Try other layouts" page (protected by the same signed link)."""
+    try:
+        post = await _review_post(post_id, "layouts", t)
+    except HTTPException:
+        raise HTTPException(403) from None
+    return await _preview_response(post, layout)
+
+
 @app.post("/review/{post_id}", response_class=HTMLResponse)
 async def review_submit(request: Request, post_id: str, action: str = Form(...), t: str = Form(...),
-                        reason: str = Form("")):
+                        reason: str = Form(""), layout: str = Form("")):
     try:
         post_before = await _review_post(post_id, action, t)
     except HTTPException:
@@ -628,6 +678,15 @@ async def review_submit(request: Request, post_id: str, action: str = Form(...),
                     text=(f"Your post is live on {await publisher.target_label()}." if ok else
                           f"{post.get('error') or 'See the details below.'} Open the dashboard to retry."),
                     post=post, results=(post.get("publish_results") or {}).get("channels", []))
+    if action == "layouts":
+        if post_before["status"] not in REVIEW_ALLOWED["layouts"]:
+            return await already()
+        post = await pipeline.switch_layout(post_id, layout, by="email link")
+        if not post:
+            return await already()
+        return page(request, "message.html", title=f"Changing to {LAYOUT_NAMES.get(layout, layout)} ✓",
+                    text="Same picture and text in the new layout. A new email with it is on its way in about a minute: "
+                         "approve it there. You can close this tab.")
     if action == "cancel":
         post = await pipeline.cancel(post_id, by="email link")
         if not post:

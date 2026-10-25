@@ -7,6 +7,7 @@ here, so spelling, phone number, logo and flag are always exactly right.
 import io
 import math
 import random
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -14,11 +15,16 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from .brand import Brand
+from .faces import best_focus
 
 W = 1080
 SIZE = W  # square layouts
 FONTS = Path(__file__).resolve().parent / "assets" / "fonts"
-TEMPLATES = ("wave", "spotlight", "skyline", "split", "cards", "frame")
+TEMPLATES = ("wave", "spotlight", "skyline", "split", "cards", "frame",
+             "glass", "editorial", "arch", "band", "corporate", "neon")
+LAYOUT_NAMES = {"wave": "Blue wave", "spotlight": "Dark photo", "skyline": "Dubai night", "split": "Diagonal split",
+                "cards": "Benefit cards", "frame": "White card", "glass": "Glass", "editorial": "Editorial",
+                "arch": "Arch", "band": "Bold band", "corporate": "Corporate", "neon": "Neon tech", "clean": "Simple photo"}
 
 ICON_PHONE = chr(0xE0CD)
 ICON_WEB = chr(0xE894)
@@ -81,6 +87,10 @@ def wrap(text: str, f: ImageFont.FreeTypeFont, max_width: float) -> list[str]:
             line = w
     if line:
         lines.append(line)
+    # a joining word never sits alone on the last line ("RELIABLE IT OPERATIONS" / "&"): take one word down with it
+    if len(lines) >= 2 and lines[-1].lower() in ("&", "and", "or", "of", "for", "to", "with") and " " in lines[-2]:
+        head, last = lines[-2].rsplit(" ", 1)
+        lines[-2:] = [head, f"{last} {lines[-1]}"]
     return lines
 
 
@@ -94,7 +104,7 @@ def fit(text: str, weight: int, max_width: float, max_size: int, min_size: int, 
             return f, lines
         size -= 2
     f = font(weight, min_size)
-    return f, wrap(text, f, max_width)[:max_lines]
+    return f, wrap(text, f, max_width)  # never drop words (the client's message must be complete); text_stack shrinks the block
 
 
 def gradient(size: tuple[int, int], stops: list[str], angle_deg: float = 0) -> Image.Image:
@@ -131,6 +141,58 @@ def cover(img: Image.Image, w: int, h: int, focus: tuple[float, float] = (0.5, 0
     left = int((nw - w) * focus[0])
     top = int((nh - h) * focus[1])
     return img.crop((left, top, left + w, top + h))
+
+
+# ---------- faces: where the photo goes, and which parts of it stay free of text ----------
+# per layout: the photo area (w, h), its usual crop (focus), and the boxes inside it where a face may be
+PHOTO_AREA = {
+    "wave": ((1080, 605), (0.55, 0.5), [(700, 160, 1080, 455), (0, 420, 640, 600)]),
+    "spotlight": ((1080, 1080), (0.5, 0.6), [(0, 650, 1080, 895), (965, 140, 1080, 650)]),
+    "skyline": ((1080, 1350), (0.5, 0.45), [(0, 590, 1080, 985)]),
+    "split": ((500, 985), (0.5, 0.5), [(0, 0, 375, 985)]),
+    "cards": ((1080, 732), (0.5, 0.15), [(0, 135, 1080, 575), (400, 0, 1080, 135)]),
+    "frame": ((1080, 1080), (0.5, 0.3), [(0, 0, 1080, 455)]),
+    "clean": ((1080, 1350), (0.5, 0.42), [(0, 120, 1080, 880), (340, 0, 1080, 120)]),
+    "clean_top": ((1080, 1350), (0.5, 0.42), [(0, 560, 1080, 1250)]),
+    "glass": ((1080, 1350), (0.5, 0.35), [(0, 150, 1080, 640)]),
+    "editorial": ((960, 640), (0.5, 0.4), [(0, 0, 960, 530)]),
+    "arch": ((500, 1010), (0.5, 0.4), [(40, 60, 460, 1010)]),
+    "band": ((1080, 1350), (0.5, 0.3), [(0, 150, 1080, 680)]),
+    "corporate": ((984, 600), (0.5, 0.35), [(340, 0, 984, 600), (0, 120, 340, 600)]),
+    "neon": ((640, 640), (0.5, 0.4), [(90, 60, 550, 580)]),
+}
+
+
+def visible_faces(faces: list, pw: int, ph: int) -> list:
+    """The faces as they are in the usable picture (after the corner mark is trimmed off). A face mostly cut off at
+    the edge is left out: no layout can keep half a face free, and it shouldn't rule every layout out."""
+    out = []
+    for x0, y0, x1, y1 in faces or []:
+        cx0, cy0, cx1, cy1 = max(0, x0), max(0, y0), min(pw, x1), min(ph, y1)
+        area = max(1, (x1 - x0) * (y1 - y0))
+        if cx1 > cx0 and cy1 > cy0 and (cx1 - cx0) * (cy1 - cy0) >= 0.6 * area:
+            out.append([cx0, cy0, cx1, cy1])
+    return out
+
+
+def place(photo: Image.Image, w: int, h: int, layout: str, content: dict, zones: list | None = None) -> Image.Image:
+    """Crop the photo to w×h for this layout so that every face is in a part with no text on it."""
+    _, default, free = PHOTO_AREA[layout]
+    faces = visible_faces(content.get("_faces"), photo.width, photo.height)
+    focus, _ = best_focus(faces, photo.width, photo.height, w, h, zones or free, default)
+    return cover(photo, w, h, focus)
+
+
+def face_fit(layout: str, content: dict, photo_size: tuple[int, int]) -> float:
+    """Share of the faces (0..1) this layout would cover on this picture; 0 = every face stays free."""
+    pw, ph = int(photo_size[0] * 0.93), int(photo_size[1] * 0.93)  # after trim_watermark
+    faces = visible_faces(content.get("_faces"), pw, ph)
+    if not faces:
+        return 0.0
+    if layout == "clean":
+        return min(face_fit("clean_bottom", content, photo_size), face_fit("clean_top", content, photo_size))
+    (w, h), default, zones = PHOTO_AREA["clean" if layout == "clean_bottom" else layout]
+    return best_focus(faces, pw, ph, w, h, zones, default)[1]  # (faces already trimmed to the picture)
 
 
 def trim_watermark(img: Image.Image) -> Image.Image:
@@ -407,7 +469,7 @@ def tpl_wave(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
     mask = Image.new("L", canvas.size, 0)
     ImageDraw.Draw(mask).polygon([*wave, (SIZE + 10, SIZE), (-10, SIZE)], fill=255)
     top = int(min(p[1] for p in wave))
-    region = cover(photo, SIZE, strip_y - top, (0.55, 0.5)).convert("RGBA")
+    region = place(photo, SIZE, strip_y - top, "wave", content).convert("RGBA")
     photo_full = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     photo_full.paste(region, (0, top))
     canvas.paste(photo_full, (0, 0), mask.filter(ImageFilter.GaussianBlur(1.2)))
@@ -442,7 +504,7 @@ def tpl_wave(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
 def tpl_spotlight(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
     col = brand.colors
     footer_y, strip_y = 985, 905
-    canvas = cover(photo, SIZE, SIZE, (0.5, 0.6)).convert("RGBA")
+    canvas = place(photo, SIZE, SIZE, "spotlight", content).convert("RGBA")
     canvas.alpha_composite(vertical_shade(canvas.size, col["deep_space"], [0, 380, 600, 800, SIZE], [240, 215, 70, 120, 200]))
     d = ImageDraw.Draw(canvas)
 
@@ -474,7 +536,7 @@ def tpl_skyline(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
     col = brand.colors
     H = 1350
     footer_y, strip_y = H - 95, H - 175
-    canvas = cover(photo, W, H, (0.5, 0.45)).convert("RGBA")
+    canvas = place(photo, W, H, "skyline", content).convert("RGBA")
     canvas.alpha_composite(vertical_shade(canvas.size, col["deep_space"], [0, 430, 650, 880, 1040, H],
                                           [238, 205, 40, 50, 215, 245]))
 
@@ -533,7 +595,7 @@ def tpl_split(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
     mask = Image.new("L", canvas.size, 0)
     ImageDraw.Draw(mask).polygon([(-10, -2), (top_x, -2), (bottom_x, footer_y), (-10, footer_y)], fill=255)
     full = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    full.paste(cover(photo, top_x, footer_y, (0.5, 0.5)).convert("RGBA"), (0, 0))
+    full.paste(place(photo, top_x, footer_y, "split", content).convert("RGBA"), (0, 0))
     canvas.paste(full, (0, 0), mask.filter(ImageFilter.GaussianBlur(1.2)))
     lines = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     ImageDraw.Draw(lines).line((top_x + 58, 0, bottom_x + 58, footer_y), fill=(255, 255, 255, 34), width=2)
@@ -586,7 +648,7 @@ def tpl_cards(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
     mask = Image.new("L", canvas.size, 0)
     ImageDraw.Draw(mask).polygon([(-10, -10), (W + 10, -10), *reversed(edge)], fill=255)
     full = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    full.paste(cover(photo, W, photo_h, (0.5, 0.15)).convert("RGBA"), (0, 0))  # crop from the bottom: heads stay in
+    full.paste(place(photo, W, photo_h, "cards", content).convert("RGBA"), (0, 0))  # crop from the bottom: heads stay in
     full.alpha_composite(vertical_shade((W, photo_h), col["deep_space"], [0, 190, photo_h], [175, 0, 0]))
     canvas.paste(full, (0, 0), mask.filter(ImageFilter.GaussianBlur(1.2)))
 
@@ -632,7 +694,7 @@ def tpl_frame(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
     """Clean editorial look: full photo, a white card at the bottom with headline, subheadline and benefit tags."""
     col = brand.colors
     footer_y = 985
-    canvas = cover(photo, SIZE, SIZE, (0.5, 0.3)).convert("RGBA")
+    canvas = place(photo, SIZE, SIZE, "frame", content).convert("RGBA")
     canvas.alpha_composite(vertical_shade(canvas.size, col["deep_space"], [0, 300, 520, footer_y, SIZE],
                                           [70, 0, 30, 120, 120]))
     left, right, bottom = 44, 1036, 952
@@ -674,14 +736,27 @@ def tpl_frame(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
 
 def tpl_clean(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
     """Clean style (1080×1350): one great photo, a short headline, the logo and a small contact line.
-    No fixed pattern: the text sits bottom-left or centred depending on the post."""
+    No fixed pattern: the text sits bottom-left or centred depending on the post, and at the top when a face
+    is in the lower part of the photo."""
     col = brand.colors
     H = 1350
-    canvas = cover(photo, W, H, (0.5, 0.42)).convert("RGBA")
+    faces = visible_faces(content.get("_faces"), photo.width, photo.height)
+    (pw, ph), default, bottom_zones = PHOTO_AREA["clean"]
+    focus, bad = best_focus(faces, photo.width, photo.height, W, H, bottom_zones, default)
+    at_top = False
+    if bad > 0.02:  # a face where the text goes: try the text at the top
+        top_focus, top_bad = best_focus(faces, photo.width, photo.height, W, H, PHOTO_AREA["clean_top"][2], default)
+        if top_bad < bad:
+            focus, at_top = top_focus, True
+    canvas = cover(photo, W, H, focus).convert("RGBA")
     headline = content.get("headline_top") or ""
-    centred = sum(map(ord, headline)) % 2 == 1
-    canvas.alpha_composite(vertical_shade(canvas.size, "#05081C", [0, 200, 340, H], [150, 45, 0, 0]))
-    canvas.alpha_composite(vertical_shade(canvas.size, "#05081C", [0, 640, 960, H], [0, 0, 165, 238]))
+    centred = sum(map(ord, headline)) % 2 == 1 and not at_top
+    if at_top:
+        canvas.alpha_composite(vertical_shade(canvas.size, "#05081C", [0, 420, 640, H], [235, 170, 0, 0]))
+        canvas.alpha_composite(vertical_shade(canvas.size, "#05081C", [0, 1150, H], [0, 0, 200]))
+    else:
+        canvas.alpha_composite(vertical_shade(canvas.size, "#05081C", [0, 200, 340, H], [150, 45, 0, 0]))
+        canvas.alpha_composite(vertical_shade(canvas.size, "#05081C", [0, 640, 960, H], [0, 0, 165, 238]))
     paste_logo(canvas, brand.logo_white, (52, 44, 52 + 260, 44 + 62))
 
     x, max_w = 64, W - 128
@@ -696,12 +771,14 @@ def tpl_clean(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
         {"text": content.get("subheadline"), "weight": 600, "max_w": max_w, "size": 28, "min": 22, "lines": 2,
          "fill": (232, 238, 255, 255), "shadow": 80, "line_gap": 4, "upper": False, "center": centred},
     ]
-    bottom = H - 150
-    height = text_stack(Image.new("RGBA", canvas.size), x, 0, 10_000, rows)
-    text_stack(canvas, x, max(620, bottom - height), bottom, rows)
-
-    bar = gradient((96, 5), [col["brand_cyan"], col["brand_purple"]]).convert("RGBA")
-    canvas.alpha_composite(bar, ((W - 96) // 2 if centred else x, H - 122))
+    if at_top:
+        text_stack(canvas, x, 150, 540, rows)
+    else:
+        bottom = H - 150
+        height = text_stack(Image.new("RGBA", canvas.size), x, 0, 10_000, rows)
+        text_stack(canvas, x, max(620, bottom - height), bottom, rows)
+        bar = gradient((96, 5), [col["brand_cyan"], col["brand_purple"]]).convert("RGBA")
+        canvas.alpha_composite(bar, ((W - 96) // 2 if centred else x, H - 122))
     c = brand.company
     items = [(ICON_WEB, c["website"])] if content.get("_contact") == "site" else [(ICON_PHONE, c["phone"]), (ICON_WEB, c["website"])]
     f, fi = font(600, 24), font("icons", 27)
@@ -716,9 +793,303 @@ def tpl_clean(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
     return canvas.convert("RGB")
 
 
+# ---------- modern layouts (1080×1350) ----------
+
+ICON_FOR = [  # a benefit's words → its icon (Material Icons)
+    (r"24/?7|round the clock|always|uptime|monitor", 0xE8B5), (r"secur|safe|protect|privacy|encrypt", 0xE897),
+    (r"fast|quick|instant|speed|rapid", 0xEA0B), (r"support|help|engineer|expert|team", 0xF0E2),
+    (r"grow|scal|conversion|sales|revenue|boost", 0xE8E5), (r"watch|view|see|visib|camera|cctv", 0xE8F4),
+    (r"cloud", 0xE2BD), (r"cost|sav|price|budget|predictable", 0xE227), (r"\bai\b|smart|automat|bot", 0xF06C),
+    (r"network|wifi|connect|fiber|cable", 0xE63E), (r"lead|chat|repl|whatsapp|message", 0xE0BF),
+    (r"data|storage|server|backup", 0xE1DB), (r"access|finger|biometric|door", 0xE90D),
+]
+
+
+def icon_for(text: str) -> str:
+    for pattern, code in ICON_FOR:
+        if re.search(pattern, text, re.I):
+            return chr(code)
+    return chr(0xE86C)  # a check in a circle
+
+
+def service_tag(content: dict) -> str:
+    s = content.get("service") or ""
+    return "" if s in ("", "General") else clean(s).upper()
+
+
+def rounded_mask(size: tuple[int, int], radius: int) -> Image.Image:
+    big = Image.new("L", (size[0] * 2, size[1] * 2), 0)
+    ImageDraw.Draw(big).rounded_rectangle((0, 0, size[0] * 2 - 1, size[1] * 2 - 1), radius * 2, fill=255)
+    return big.resize(size, Image.LANCZOS)
+
+
+def paste_rounded(canvas: Image.Image, img: Image.Image, xy, radius: int, shadow: int = 0):
+    if shadow:
+        sh = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        x, y = xy
+        ImageDraw.Draw(sh).rounded_rectangle((x, y + 18, x + img.width, y + img.height + 18), radius, fill=(8, 14, 40, shadow))
+        canvas.alpha_composite(sh.filter(ImageFilter.GaussianBlur(26)))
+    canvas.paste(img, xy, rounded_mask(img.size, radius))
+
+
+def pill(canvas: Image.Image, box, fill, outline=None):
+    """See-through shapes are blended on their own layer (drawn straight on the picture they would punch holes)."""
+    layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    ImageDraw.Draw(layer).rounded_rectangle(box, (box[3] - box[1]) // 2, fill=fill, outline=outline,
+                                            width=2 if outline else 0)
+    canvas.alpha_composite(layer)
+
+
+def frosted(canvas: Image.Image, box, radius: int = 36, tint=(8, 16, 48, 120), blur: int = 26):
+    """A frosted-glass panel: the photo behind it blurred and tinted, with a thin light edge."""
+    region = canvas.crop(box).filter(ImageFilter.GaussianBlur(blur))
+    region.alpha_composite(Image.new("RGBA", region.size, tint))
+    region.alpha_composite(vertical_shade(region.size, "#FFFFFF", [0, region.height], [26, 0]))
+    paste_rounded(canvas, region, (box[0], box[1]), radius, shadow=70)
+    edge = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    ImageDraw.Draw(edge).rounded_rectangle(box, radius, outline=(255, 255, 255, 70), width=2)
+    canvas.alpha_composite(edge)
+
+
+def chip(canvas: Image.Image, x, y, text: str, fg, bg, size: int = 22, pad: int = 18, h: int = 46, dot=None,
+         border=None) -> float:
+    f = font(700, size)
+    w = text_width(f, text) + pad * 2 + (22 if dot else 0)
+    pill(canvas, (x, y, x + w, y + h), bg, border)
+    d = ImageDraw.Draw(canvas)
+    tx = x + pad
+    if dot:
+        d.ellipse((tx, y + h / 2 - 6, tx + 12, y + h / 2 + 6), fill=dot)
+        tx += 22
+    d.text((tx, y + h / 2), text, font=f, fill=fg, anchor="lm")
+    return w
+
+
+def icon_pills(canvas: Image.Image, x, y, items: list[str], max_w, fill, text_fill, icon_fill, outline=None):
+    """Benefits as rounded pills with an icon, on one line."""
+    f = fit_one_line(items, 700, (max_w - 40) / max(len(items), 1) - 60, 22, 15)
+    for t in items:
+        w = 50 + text_width(f, t) + 22
+        pill(canvas, (x, y, x + w, y + 52), fill, outline)
+        d = ImageDraw.Draw(canvas)
+        d.text((x + 28, y + 26), icon_for(t), font=font("icons", 26), fill=icon_fill, anchor="mm")
+        d.text((x + 50, y + 26), t, font=f, fill=text_fill, anchor="lm")
+        x += w + 14
+
+
+def headline_rows(content: dict, max_w, color, hi_fill, sub_color, top=64, hi=96, sub=30, upper=True) -> list[dict]:
+    return [
+        {"text": content["headline_top"], "weight": 800, "max_w": max_w, "size": top, "min": 32, "lines": 3,
+         "fill": color, "line_gap": -4, "upper": upper},
+        {"text": content.get("headline_highlight"), "weight": 900, "max_w": max_w, "size": hi, "min": 42, "lines": 2,
+         "fill": hi_fill, "line_gap": -8, "gap_after": 18, "upper": upper, "dx": -2},
+        {"text": content.get("subheadline"), "weight": 600, "max_w": max_w, "size": sub, "min": 21, "lines": 3,
+         "fill": sub_color, "line_gap": 6, "upper": False},
+    ]
+
+
+def _benefits(content: dict) -> list[str]:
+    return [b for b in content.get("benefits") or [] if b][:3]
+
+
+def tpl_glass(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
+    """Full photo; the message on a frosted-glass panel with benefit pills; the service tag top right."""
+    col, H = brand.colors, 1350
+    canvas = place(photo, W, H, "glass", content).convert("RGBA")
+    canvas.alpha_composite(vertical_shade(canvas.size, "#050A24", [0, 170, 600, H], [150, 0, 40, 210]))
+    paste_logo(canvas, brand.logo_white, (56, 50, 56 + 300, 50 + 70))
+    tag = service_tag(content)
+    if tag:
+        tw = text_width(font(700, 20), tag) + 58
+        chip(canvas, W - 56 - tw, 62, tag, WHITE, (255, 255, 255, 40), size=20, dot=rgb(col["accent_yellow"], 255),
+             border=(255, 255, 255, 90))
+    box = (48, 690, W - 48, H - 128)
+    frosted(canvas, box)
+    x, mw = box[0] + 48, box[2] - box[0] - 96
+    text_stack(canvas, x, box[1] + 44, box[3] - 150,
+               headline_rows(content, mw, WHITE, rgb(col["accent_yellow"], 255), (226, 233, 255, 255), 56, 84, 28))
+    icon_pills(canvas, x, box[3] - 96, _benefits(content), mw, (255, 255, 255, 240), rgb(col["navy"], 255),
+               rgb(col["brand_blue"], 255))
+    footer(canvas, brand, H - 96, (*rgb(col["deep_space"]), 235), icon_color=rgb(col["accent_yellow"], 255))
+    return canvas.convert("RGB")
+
+
+def tpl_editorial(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
+    """A big headline on deep navy at the top; the photo as a rounded card below with a service tag."""
+    col, H = brand.colors, 1350
+    canvas = gradient((W, H), [col["deep_space"], col["navy"], "#2A2470"], 70).convert("RGBA")
+    soft_glow(canvas, (560, -220, 1300, 420), col["brand_cyan"], 70, 140)
+    grid = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    gd = ImageDraw.Draw(grid)
+    for gx in range(0, W, 54):
+        gd.line((gx, 0, gx, 560), fill=(255, 255, 255, 10))
+    for gy in range(0, 560, 54):
+        gd.line((0, gy, W, gy), fill=(255, 255, 255, 10))
+    canvas.alpha_composite(grid)
+    paste_logo(canvas, brand.logo_white, (60, 52, 60 + 290, 52 + 66))
+    dot_grid(canvas, W - 60 - 5 * 24, 84, 6, 1, 24, 4, rgb(col["accent_yellow"], 220))
+    y = text_stack(canvas, 60, 160, 560, headline_rows(content, W - 120, WHITE, ["#3FD3F5", "#6FA8FF", "#B08CFF"],
+                                                        (205, 214, 245, 255), 60, 104, 30))
+    card_top = max(y + 36, 560)
+    ph = H - 110 - card_top - 40
+    pic = place(photo, W - 120, ph, "editorial", content, zones=[(0, 0, W - 120, ph - 110)]).convert("RGBA")
+    paste_rounded(canvas, pic, (60, card_top), 40, shadow=120)
+    items = _benefits(content)
+    frosted(canvas, (84, card_top + ph - 102, W - 84, card_top + ph - 24), radius=24, tint=(8, 16, 48, 150), blur=18)
+    f = fit_one_line(items, 700, (W - 168) / 3 - 60, 23, 16)
+    d = ImageDraw.Draw(canvas)
+    colw = (W - 168) / max(len(items), 1)
+    for i, t in enumerate(items):
+        gw = 44 + text_width(f, t)
+        tx, cy = 84 + i * colw + (colw - gw) / 2, card_top + ph - 63
+        d.text((tx + 17, cy), icon_for(t), font=font("icons", 30), fill=rgb(col["accent_yellow"], 255), anchor="mm")
+        d.text((tx + 44, cy), t, font=f, fill=WHITE, anchor="lm")
+    if service_tag(content):
+        chip(canvas, 90, card_top - 23, service_tag(content), rgb(col["navy"], 255), rgb(col["accent_yellow"], 255), size=20)
+    footer(canvas, brand, H - 96, rgb(col["deep_space"], 255), icon_color=rgb(col["accent_yellow"], 255))
+    return canvas.convert("RGB")
+
+
+def tpl_arch(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
+    """Light magazine look: the photo in a tall arch on the right; text and an icon benefit list on the left."""
+    col, H = brand.colors, 1350
+    canvas = gradient((W, H), ["#FFFFFF", "#EDF2FB"], 90).convert("RGBA")
+    soft_glow(canvas, (-200, 820, 420, 1400), col["brand_cyan"], 40, 140)
+    aw, ah, ax, ay = 500, 1010, W - 500 - 48, 150
+    pic = place(photo, aw, ah, "arch", content).convert("RGBA")
+    mask = Image.new("L", (aw * 2, ah * 2), 0)
+    md = ImageDraw.Draw(mask)
+    md.ellipse((0, 0, aw * 2, aw * 2), fill=255)
+    md.rectangle((0, aw, aw * 2, ah * 2), fill=255)
+    mask = mask.resize((aw, ah), Image.LANCZOS)
+    ring = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    ImageDraw.Draw(ring).ellipse((ax - 16, ay - 16, ax + aw + 16, ay + aw + 16), outline=rgb(col["brand_purple"], 90), width=3)
+    canvas.alpha_composite(ring)
+    sh = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    sh.paste((10, 20, 60, 90), (ax, ay + 22), mask)
+    canvas.alpha_composite(sh.filter(ImageFilter.GaussianBlur(26)))
+    canvas.paste(pic, (ax, ay), mask)
+    paste_logo(canvas, brand.logo_color, (56, 56, 56 + 300, 56 + 70))
+    x, mw = 60, ax - 60 - 44
+    rows = headline_rows(content, mw, rgb(col["navy"], 255), brand.profile["visual"]["logo_gradient"],
+                         (78, 92, 128, 255), 52, 78, 26)
+    items, tag = _benefits(content), service_tag(content)
+    block = text_stack(Image.new("RGBA", canvas.size), x, 0, 620, rows) + (70 if tag else 0) + 44 + 82 * len(items)
+    top = 170 + max(0, (H - 96 - 60 - 170 - block) // 2)
+    if tag:
+        chip(canvas, x, top, tag, rgb(col["brand_blue"], 255), (226, 236, 252, 255), size=17, h=40, pad=14)
+        top += 70
+    y = text_stack(canvas, x, top, top + 620, rows)
+    d = ImageDraw.Draw(canvas)
+    d.line((x, y + 18, x + 90, y + 18), fill=rgb(col["accent_yellow"], 255), width=5)
+    f = fit_one_line(items, 700, mw - 80, 26, 18) if items else None
+    for i, t in enumerate(items):
+        cy = y + 44 + i * 82 + 41
+        d.rounded_rectangle((x, cy - 26, x + 52, cy + 26), 15, fill=(226, 236, 252, 255))
+        d.text((x + 26, cy), icon_for(t), font=font("icons", 30), fill=rgb(col["brand_blue"], 255), anchor="mm")
+        d.text((x + 72, cy), t, font=f, fill=rgb(col["navy"], 255), anchor="lm")
+        if i < len(items) - 1:
+            d.line((x, cy + 41, x + mw, cy + 41), fill=(210, 220, 236, 255), width=2)
+    footer(canvas, brand, H - 96, rgb(col["navy"], 255), icon_color=rgb(col["accent_yellow"], 255))
+    return canvas.convert("RGB")
+
+
+def tpl_band(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
+    """Full photo with a bold angled colour band (yellow edge) across the lower part carrying the message."""
+    col, H = brand.colors, 1350
+    canvas = place(photo, W, H, "band", content).convert("RGBA")
+    canvas.alpha_composite(vertical_shade(canvas.size, "#050A24", [0, 180, 700, H], [140, 0, 0, 120]))
+    paste_logo(canvas, brand.logo_white, (56, 50, 56 + 300, 50 + 70))
+    band = Image.new("L", canvas.size, 0)
+    ImageDraw.Draw(band).polygon([(0, 790), (W, 700), (W, H), (0, H)], fill=255)
+    canvas.paste(gradient((W, H), [col["navy"], col["brand_blue"], col["brand_purple"]], 20).convert("RGBA"), (0, 0), band)
+    edge = Image.new("L", canvas.size, 0)
+    ImageDraw.Draw(edge).polygon([(0, 772), (W, 682), (W, 700), (0, 790)], fill=255)
+    canvas.paste(Image.new("RGBA", canvas.size, rgb(col["accent_yellow"], 255)), (0, 0), edge)
+    text_stack(canvas, 60, 830, 1110, headline_rows(content, W - 120, WHITE, rgb(col["accent_yellow"], 255),
+                                                     (226, 233, 255, 255), 54, 84, 27))
+    items = _benefits(content)
+    f = fit_one_line(items, 700, (W - 120) / 3 - 56, 22, 16)
+    d = ImageDraw.Draw(canvas)
+    cx, cy = 60, H - 96 - 70
+    for t in items:
+        d.text((cx + 16, cy), icon_for(t), font=font("icons", 30), fill=rgb(col["accent_yellow"], 255), anchor="mm")
+        d.text((cx + 42, cy), t, font=f, fill=WHITE, anchor="lm")
+        cx += 42 + text_width(f, t) + 34
+    footer(canvas, brand, H - 96, rgb(col["deep_space"], 255), icon_color=rgb(col["accent_yellow"], 255))
+    return canvas.convert("RGB")
+
+
+def tpl_corporate(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
+    """Clean LinkedIn style: light background, rounded photo on top, service tag, headline, 3 benefit cards."""
+    col, H = brand.colors, 1350
+    canvas = Image.new("RGBA", (W, H), (247, 249, 253, 255))
+    pic = place(photo, W - 96, 600, "corporate", content).convert("RGBA")
+    paste_rounded(canvas, pic, (48, 48), 36, shadow=80)
+    logo_card = (72, 72, 72 + 300, 72 + 84)
+    rounded_card(canvas, logo_card, 22, (255, 255, 255, 240), shadow=60)
+    paste_logo(canvas, brand.logo_color, (logo_card[0] + 24, logo_card[1] + 14, logo_card[2] - 24, logo_card[3] - 14))
+    x, mw = 64, W - 128
+    tag = service_tag(content)
+    if tag:
+        chip(canvas, x, 690, tag, WHITE, rgb(col["brand_blue"], 255), size=19, h=44)
+    headline = " ".join(t for t in (content["headline_top"], content.get("headline_highlight")) if t)
+    y = text_stack(canvas, x, 760 if tag else 700, 1000, [
+        {"text": headline, "weight": 800, "max_w": mw, "size": 60, "min": 34, "lines": 3,
+         "fill": rgb(col["navy"], 255), "line_gap": -4, "gap_after": 14, "upper": False},
+        {"text": content.get("subheadline"), "weight": 600, "max_w": mw, "size": 28, "min": 21, "lines": 2,
+         "fill": (80, 94, 130, 255), "line_gap": 6, "upper": False},
+    ])
+    items = _benefits(content)
+    n, gap = max(len(items), 1), 16
+    cw = (mw - gap * (n - 1)) / n
+    top = max(y + 30, 1030)
+    f = fit_one_line(items, 700, cw - 40, 23, 15)
+    for i, t in enumerate(items):
+        x0 = x + i * (cw + gap)
+        rounded_card(canvas, (round(x0), top, round(x0 + cw), top + 150), 22, WHITE, shadow=40)
+        badge(canvas, x0 + 46, top + 50, 56, brand, label="")
+        d = ImageDraw.Draw(canvas)
+        d.text((x0 + 46, top + 50), icon_for(t), font=font("icons", 31), fill=WHITE, anchor="mm")
+        d.text((x0 + 22, top + 108), t, font=f, fill=rgb(col["navy"], 255), anchor="lm")
+    footer(canvas, brand, H - 96, rgb(col["navy"], 255), icon_color=rgb(col["accent_yellow"], 255))
+    return canvas.convert("RGB")
+
+
+def tpl_neon(photo: Image.Image, content: dict, brand: Brand) -> Image.Image:
+    """Dark tech look: glowing circuit lines, the photo in a circle with a glowing gradient ring."""
+    col, H = brand.colors, 1350
+    canvas = gradient((W, H), ["#04071A", "#0B1540", "#1B1450"], 60).convert("RGBA")
+    lines = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    ld = ImageDraw.Draw(lines)
+    rnd = random.Random(content.get("headline_top", ""))
+    for _ in range(16):
+        x0, y0 = rnd.randint(0, W), rnd.randint(0, H)
+        x1 = x0 + rnd.choice((-1, 1)) * rnd.randint(80, 260)
+        ld.line((x0, y0, x1, y0, x1, y0 + rnd.randint(60, 200)), fill=(0, 200, 255, 50), width=2)
+        ld.ellipse((x1 - 5, y0 - 5, x1 + 5, y0 + 5), fill=(0, 220, 255, 110))
+    canvas.alpha_composite(lines)
+    d0 = 640
+    cx, cy = W - d0 // 2 - 20, 150 + d0 // 2
+    soft_glow(canvas, (cx - d0 // 2 - 70, cy - d0 // 2 - 70, cx + d0 // 2 + 70, cy + d0 // 2 + 70), col["brand_cyan"], 90, 70)
+    ring = gradient((d0 + 24, d0 + 24), [col["brand_cyan"], col["brand_blue"], col["brand_purple"]], 45).convert("RGBA")
+    ring.putalpha(circle_mask(d0 + 24))
+    canvas.alpha_composite(ring, (cx - d0 // 2 - 12, cy - d0 // 2 - 12))
+    canvas.paste(place(photo, d0, d0, "neon", content).convert("RGBA"), (cx - d0 // 2, cy - d0 // 2), circle_mask(d0))
+    paste_logo(canvas, brand.logo_white, (56, 50, 56 + 300, 50 + 70))
+    text_stack(canvas, 60, 830, 1080, headline_rows(content, W - 120, WHITE, ["#3FD3F5", "#6FA8FF", "#B08CFF"],
+                                                     (205, 214, 245, 255), 54, 88, 27))
+    icon_pills(canvas, 60, H - 96 - 34 - 52, _benefits(content), W - 120, (255, 255, 255, 18), WHITE,
+               (90, 230, 255, 255), outline=(0, 200, 255, 140))
+    footer(canvas, brand, H - 96, (4, 7, 26, 255), icon_color=rgb(col["accent_yellow"], 255))
+    return canvas.convert("RGB")
+
+
 RENDERERS = {"wave": tpl_wave, "spotlight": tpl_spotlight, "skyline": tpl_skyline,
              "split": tpl_split, "cards": tpl_cards, "frame": tpl_frame,
-             "clean": tpl_clean}  # clean is for typed ideas and demos, never picked by the Auto planner
+             "glass": tpl_glass, "editorial": tpl_editorial, "arch": tpl_arch, "band": tpl_band,
+             "corporate": tpl_corporate, "neon": tpl_neon,
+             "clean": tpl_clean}  # clean: the simple photo style (topics that are not a service, and demos)
 
 
 def thumbnail(jpeg_bytes: bytes, width: int = 480) -> bytes:

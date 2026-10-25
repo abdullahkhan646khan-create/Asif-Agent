@@ -10,12 +10,16 @@ Post statuses:
 """
 
 import asyncio
+import io
 import logging
 from datetime import timedelta
 
+from PIL import Image
+
 from . import emailer, publisher
 from .brand import load_brand
-from .composer import compose, thumbnail
+from .composer import LAYOUT_NAMES, TEMPLATES, compose, face_fit, thumbnail
+from .faces import find_faces
 from .imagegen import pool
 from .industries import INDUSTRIES, industry_name, next_scene
 from .store import get_store
@@ -126,8 +130,9 @@ async def generate(post_id: str) -> None:
             idea = "" if post["idea"].startswith("Auto: ") else post["idea"]
             mode = prefs.get("mode") or ("idea" if idea else "auto")
             demo = INDUSTRIES.get(prefs.get("industry")) and mode == "demo"
-            # typed ideas (with Auto layout) and industry demos use the clean style; Auto and schedule keep the layouts
-            clean = bool(demo) or (mode == "idea" and not post.get("template_pref"))
+            # industry demos and a typed idea with "Simple photo" use the clean style; everything else gets a brand
+            # layout (a typed idea that isn't about one of the services becomes a simple photo after its brief)
+            clean = bool(demo) or (post.get("template_pref") == "clean" and bool(idea))
 
             if mode == "upload" and (not post.get("brief") or not post.get("captions")):
                 # the client's own photo(s) or video: the AI looks at it and writes the title and captions
@@ -180,18 +185,25 @@ async def generate(post_id: str) -> None:
                 post = await _stage(post_id, stage)
                 plan = prefs.get("plan")
                 if not plan:
-                    plan = make_plan(past, prefs.get("service"), prefs.get("post_type"), post.get("template_pref"), brand)
+                    plan = make_plan(past, prefs.get("service"), prefs.get("post_type"),
+                                     None if post.get("template_pref") == "clean" else post.get("template_pref"), brand)
                     prefs = {**prefs, "plan": plan}
                     post = await store.update_post(post_id, prefs=prefs)
                 if not post.get("brief"):
                     brief = await make_brief(brand, idea, plan, past, feedback, message=prefs.get("message") or "")
+                    if post.get("template_pref") == "clean" or (
+                            mode == "idea" and not post.get("template_pref") and not prefs.get("service")
+                            and brief.get("service") == "General"):
+                        brief = {**brief, "template": "clean"}  # not about a service (a limo, a greeting): simple photo
                     post = await store.update_post(post_id, brief=brief)
                 try:  # write a caption for every platform connected in Buffer right now
                     platforms = await publisher.caption_platforms()
                 except Exception as e:
                     platforms = None  # Buffer not reachable: the POST_PLATFORMS setting is used
                     log.warning("Could not read the Buffer channels (%s); using POST_PLATFORMS", e)
-                captions = await make_copy(brand, idea, post["brief"], plan, past, feedback, platforms)
+                simple_idea = mode == "idea" and post["brief"].get("template") == "clean"
+                captions = await make_copy(brand, idea, post["brief"], plan, past, feedback, platforms,
+                                           mode="idea" if simple_idea else "brand")
                 post = await store.update_post(post_id, captions=captions)
 
             if not post.get("raw_image_path"):
@@ -216,11 +228,14 @@ async def generate(post_id: str) -> None:
                 stage = "designing"
                 post = await _stage(post_id, stage)
                 raw = await store.read_file(post["raw_image_path"])
-                final = await asyncio.to_thread(compose, post["brief"]["template"], raw, post["brief"], brand)
-                path = f"{post_id}/v{v}.jpg"
+                if "_faces" not in post["brief"]:
+                    post = await store.update_post(post_id, brief=await _face_check(post_id, post["brief"], raw))
+                layout = post["brief"]["template"]
+                final = await asyncio.to_thread(compose, layout, raw, post["brief"], brand)
+                path = f"{post_id}/v{v}-{layout}.jpg"  # a new address per layout: no browser shows an old copy
                 url = await store.save_file(path, final, "image/jpeg")
                 thumb = await asyncio.to_thread(thumbnail, final)
-                thumb_url = await store.save_file(f"{post_id}/v{v}-thumb.jpg", thumb, "image/jpeg")
+                thumb_url = await store.save_file(f"{post_id}/v{v}-{layout}-thumb.jpg", thumb, "image/jpeg")
                 post = await store.update_post(post_id, final_image_path=path, final_image_url=url,
                                                brief={**post["brief"], "_thumb": thumb_url})
 
@@ -242,6 +257,7 @@ async def generate(post_id: str) -> None:
                     log.exception("Heads-up email for automatic post %s failed", post_id)
                     await note(post_id, f"Version {v} ready · heads-up email could not be sent ({e})")
                 await store.claim(post_id, ["emailing"], "scheduled", stage_note=f"Publishes automatically · {fmt(when)}")
+                spawn(prepare_layouts(post_id))
             else:
                 # the dashboard can always approve it, so a failed email must not lose the post
                 email_problem = None
@@ -255,6 +271,7 @@ async def generate(post_id: str) -> None:
                     await note(post_id, f"Version {v} ready · review email could NOT be sent: {e}")
                 waiting = f"Waiting for your approval · for {fmt(when)}" if when else STAGE_LABEL["pending_review"]
                 await store.claim(post_id, ["emailing"], "pending_review", stage_note=waiting, error=email_problem)
+                spawn(prepare_layouts(post_id))  # previews for "Try other layouts", made after the email is out
         except Stopped:
             log.info("Post %s was cancelled while being made", post_id)
         except Exception as e:
@@ -299,6 +316,107 @@ async def create(idea: str, template_pref: str | None, service: str | None = Non
         what += f" · to go out {fmt(scheduled_for)}" + (" automatically" if prefs["auto_publish"] else "")
     await note(post["id"], what, "schedule" if source == "schedule" else by)
     spawn(generate(post["id"]))
+    return post
+
+
+# ---------- layouts: faces stay free; the client can switch layout (same picture, same text) ----------
+
+ALL_LAYOUTS = (*TEMPLATES, "clean")
+FACE_OK = 0.05  # a layout may cover at most this share of the faces (a hair's edge, not a face)
+_preview_locks: dict[str, asyncio.Lock] = {}
+
+
+def pick_layout(brief: dict) -> str:
+    """The planned layout if it keeps every face free, otherwise the next layout that does."""
+    current, size = brief["template"], brief.get("_photo_size") or (1024, 1024)
+    if current == "clean" or face_fit(current, brief, size) <= FACE_OK:
+        return current
+    start = TEMPLATES.index(current) if current in TEMPLATES else 0
+    order = TEMPLATES[start + 1:] + TEMPLATES[:start]
+    fits = [(face_fit(t, brief, size), i, t) for i, t in enumerate(order)]
+    good = [f for f in fits if f[0] <= FACE_OK]
+    return (good or sorted(fits))[0][2]
+
+
+async def _face_check(post_id: str, brief: dict, raw: bytes) -> dict:
+    """Find the faces in the picture once; switch to another layout if the planned one would cover a face."""
+    img = Image.open(io.BytesIO(raw))
+    faces = await asyncio.to_thread(find_faces, img)
+    brief = {**brief, "_faces": faces, "_photo_size": list(img.size)}
+    if faces and not brief.get("_layout_by_client"):
+        better = await asyncio.to_thread(pick_layout, brief)
+        if better != brief["template"]:
+            await note(post_id, f"{LAYOUT_NAMES.get(brief['template'], brief['template'])} would cover a face in this "
+                                f"picture → using {LAYOUT_NAMES.get(better, better)}")
+            brief["template"] = better
+    elif faces and face_fit(brief["template"], brief, brief["_photo_size"]) > FACE_OK:
+        await note(post_id, f"Note: {LAYOUT_NAMES.get(brief['template'])} covers part of a face in this picture")
+    return brief
+
+
+def can_switch_layout(post: dict) -> bool:
+    return (post.get("status") == "pending_review" and not is_upload(post) and bool(post.get("brief"))
+            and bool(post.get("raw_image_path")) and bool(post.get("captions")))
+
+
+def layout_options(post: dict) -> list[dict]:
+    """Every layout for this post: its name, whether it is the current one, and whether it would cover a face."""
+    brief = post.get("brief") or {}
+    size = brief.get("_photo_size") or (1024, 1024)
+    return [{"key": t, "name": LAYOUT_NAMES[t], "current": t == brief.get("template"),
+             "covers_face": face_fit(t, brief, size) > FACE_OK} for t in ALL_LAYOUTS]
+
+
+async def layout_preview(post: dict, layout: str) -> str:
+    """A small picture of this post in another layout (made once, then kept). Returns its address."""
+    store = get_store()
+    key = f"alts_{post['id']}_{post['attempt']}"
+    done = await store.get_setting(key) or {}
+    if layout in done:
+        return done[layout]
+    lock = _preview_locks.setdefault(post["id"], asyncio.Lock())
+    async with lock:  # one at a time per post (the server is small)
+        done = await store.get_setting(key) or {}
+        if layout in done:
+            return done[layout]
+        raw = await store.read_file(post["raw_image_path"])
+        full = await asyncio.to_thread(compose, layout, raw, {**post["brief"], "template": layout}, load_brand())
+        small = await asyncio.to_thread(thumbnail, full, 420)
+        url = await store.save_file(f"{post['id']}/v{post['attempt']}-alt-{layout}.jpg", small, "image/jpeg")
+        await store.set_setting(key, {**(await store.get_setting(key) or {}), layout: url})
+        return url
+
+
+async def prepare_layouts(post_id: str) -> None:
+    """Make every layout preview in the background, so "Try other layouts" opens quickly."""
+    for layout in ALL_LAYOUTS:
+        post = await get_store().get_post(post_id)
+        if not post or post["status"] not in ("pending_review", "scheduled") or not can_preview(post):
+            return
+        try:
+            await layout_preview(post, layout)
+        except Exception:
+            log.exception("Layout preview %s for %s failed", layout, post_id)
+
+
+def can_preview(post: dict) -> bool:
+    return not is_upload(post) and bool(post.get("brief")) and bool(post.get("raw_image_path"))
+
+
+async def switch_layout(post_id: str, layout: str, by: str = "dashboard") -> dict | None:
+    """Show the same picture and text in another layout; a new approval email follows."""
+    post = await get_store().get_post(post_id)
+    if not post or layout not in ALL_LAYOUTS or not can_switch_layout(post):
+        return None
+    if post["brief"].get("template") == layout:
+        return post
+    old = post["brief"].get("template")
+    brief = {**post["brief"], "template": layout, "_layout_by_client": True}
+    post = await get_store().claim(post_id, ["pending_review"], "queued", brief=brief, final_image_path=None,
+                                   final_image_url=None, error=None, stage_note=f"Changing the layout to {LAYOUT_NAMES[layout]}")
+    if post:
+        await note(post_id, f"Layout changed: {LAYOUT_NAMES.get(old, old)} → {LAYOUT_NAMES[layout]}", by)
+        spawn(generate(post_id))
     return post
 
 

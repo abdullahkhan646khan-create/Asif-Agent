@@ -66,7 +66,8 @@ async def fake_ask_json(system, user, check=None, temperature=0.7):
     if "creative director" in system:
         layout = re.search(r"LAYOUT: use '(\w+)'", user).group(1)
         data = {
-            "post_type": "service_promo", "service": "Structured Cabling", "angle": words(rnd, 8),
+            "post_type": "service_promo", "angle": words(rnd, 8),
+            "service": "General" if "limo" in user.split("SERVICE:")[0].lower() else "Structured Cabling",
             "template": layout, "headline_top": words(rnd, 2).title(), "headline_highlight": words(rnd, 1).title(),
             "subheadline": words(rnd, 7), "body": words(rnd, 14),
             "benefits": [words(rnd, 2).title() for _ in range(3)],
@@ -747,10 +748,13 @@ def test_every_layout_renders_at_its_size():
                "subheadline": "End-to-end managed networks, firewalls and Wi-Fi for growing companies across the UAE.",
                "body": "Smart, scalable networks for UAE businesses.", "benefits": ["Instant notifications",
                "Lower running costs", "Certified engineers"], "bullets": ["Live check-in", "Instant reports", "One dashboard"]}
-    assert set(TEMPLATES) == {"wave", "spotlight", "skyline", "split", "cards", "frame"}  # circle + checklist removed
-    for t in TEMPLATES:
-        img = Image.open(io.BytesIO(compose(t, buf.getvalue(), {"template": t, **content}, load_brand())))
-        assert img.size == ((1080, 1350) if t in ("skyline", "cards") else (1080, 1080)), t
+    assert set(TEMPLATES) == {"wave", "spotlight", "skyline", "split", "cards", "frame",  # circle + checklist removed
+                              "glass", "editorial", "arch", "band", "corporate", "neon"}  # the modern layouts
+    square = ("wave", "spotlight", "split", "frame")
+    for t in (*TEMPLATES, "clean"):
+        img = Image.open(io.BytesIO(compose(t, buf.getvalue(), {"template": t, "service": "Network Solutions", **content},
+                                            load_brand())))
+        assert img.size == ((1080, 1080) if t in square else (1080, 1350)), t
 
 
 def test_people_use_a_helmet_technician_instead_of_the_african_engineer():
@@ -901,19 +905,29 @@ def test_every_buffer_channel_type_gets_its_own_post(monkeypatch):
     assert "phone number" in problems and "hashtags" in problems and "'tiktok_title' is missing" in problems
 
 
-def test_typed_idea_is_followed_in_the_clean_style(client):
-    """The client's idea decides the post: it reaches the AI as the brief, any topic, clean style."""
+def test_typed_idea_gets_a_brand_layout_or_a_simple_photo(client):
+    """A typed prompt about a service gets a full brand layout (headline, benefits, contact bar); a prompt that is
+    not about a service (a limo, a greeting) stays a simple photo. Either way the idea decides the post."""
+    prompts.clear()
+    idea = "HD CCTV for a warehouse in Al Quoz, a technician in a white helmet fixing a camera"
+    post = wait_for(client, client.post("/api/posts", json={"idea": idea}).json()["id"], ["pending_review", "failed"])
+    assert post["status"] == "pending_review", post["error"]
+    from app.composer import TEMPLATES
+    assert post["brief"]["template"] in TEMPLATES and len(post["brief"]["benefits"]) == 3
+    director = next(u for sy, u in prompts if "LAYOUT: use" in u)
+    assert idea in director and "THE IDEA WINS" in director
+
     prompts.clear()
     idea = "Luxury limo service: a black Mercedes S-Class at the Burj Khalifa at night"
-    post = client.post("/api/posts", json={"idea": idea}).json()
-    post = wait_for(client, post["id"], ["pending_review", "failed"])
+    post = wait_for(client, client.post("/api/posts", json={"idea": idea}).json()["id"], ["pending_review", "failed"])
     assert post["status"] == "pending_review", post["error"]
-    assert post["brief"]["template"] == "clean" and post["brief"]["_contact"] == "full"
-    director = next((sy, u) for sy, u in prompts if "ON-IMAGE TEXT" in sy)
-    assert "THE IDEA IS THE BRIEF" in director[0] and idea in director[1]
-    assert "must follow" not in director[0] + director[1]  # no forced person/place/service any more
+    assert post["brief"]["template"] == "clean"  # not an Amanasoft service: simple photo
     copy = next(sy for sy, u in prompts if "copywriter" in sy)
     assert idea in copy and "Stay on that topic" in copy
+
+    # "Simple photo" picked in the form: the clean style even for a service
+    post = client.post("/api/posts", json={"idea": "Fiber cabling in a new office", "template": "clean"}).json()
+    assert wait_for(client, post["id"], ["pending_review", "failed"])["brief"]["template"] == "clean"
 
 
 def test_idea_wins_in_the_branded_layouts_too(client):
@@ -971,9 +985,10 @@ def test_message_on_the_post_is_used_word_for_word(client):
     post = wait_for(client, post["id"], ["pending_review", "failed"])
     assert post["status"] == "pending_review", post["error"]
     b = post["brief"]
-    assert (b["headline_top"], b["headline_highlight"], b["subheadline"]) == ("Arrive in style.", "", "Book your chauffeur today.")
-    assert b["service"] == "Web Chatbot" and b["template"] == "clean"
-    director = next(u for sy, u in prompts if "ON-IMAGE TEXT" in sy)
+    # a brand layout: the first sentence is the headline with its last word big, the rest is the line below
+    assert (b["headline_top"], b["headline_highlight"], b["subheadline"]) == ("Arrive in", "style.", "Book your chauffeur today.")
+    assert b["service"] == "Web Chatbot" and b["template"] != "clean"
+    director = next(u for sy, u in prompts if "LAYOUT: use" in u)
     assert body["idea"] in director and "SERVICE: Web Chatbot" in director and body["message"] in director
     copy_user = next(u for sy, u in prompts if "copywriter" in sy)
     assert body["message"] in copy_user  # the captions build on the message
@@ -981,12 +996,14 @@ def test_message_on_the_post_is_used_word_for_word(client):
     # only a message: it is also the prompt
     post = client.post("/api/posts", json={"message": "Your network, always on"}).json()
     post = wait_for(client, post["id"], ["pending_review", "failed"])
-    assert post["idea"] == "Your network, always on" and post["brief"]["headline_top"] == "Your network, always on"
+    assert post["idea"] == "Your network, always on"
+    assert (post["brief"]["headline_top"], post["brief"]["headline_highlight"]) == ("Your network,", "always on")
 
     # a branded layout keeps the message too
     post = client.post("/api/posts", json={"idea": "Fiber cabling for offices", "message": "Fast, clean, tested", "template": "split"}).json()
     post = wait_for(client, post["id"], ["pending_review", "failed"])
-    assert post["brief"]["template"] == "split" and post["brief"]["headline_top"] == "Fast, clean, tested"
+    assert post["brief"]["template"] == "split"
+    assert (post["brief"]["headline_top"], post["brief"]["headline_highlight"]) == ("Fast, clean,", "tested")
 
     assert client.post("/api/posts", json={"idea": "x" * 10, "message": "y" * 151}).status_code == 400
 
@@ -1320,3 +1337,82 @@ def test_browsers_always_get_the_new_style_and_scripts_after_an_update(client):
     versioned = client.get(re.search(r'href="(/static/app\.css\?v=\w+)"', page).group(1))
     assert versioned.status_code == 200 and "immutable" in versioned.headers["cache-control"] and ".ai-fab" in versioned.text
     assert client.get("/static/app.css").headers["cache-control"] == "no-cache"  # an old page's plain address: always checked
+
+
+# ---------- layouts: faces stay free; same picture in any layout ----------
+
+def test_text_never_covers_a_face(client, monkeypatch):
+    """The AI picture has a face at the top: the Dark photo layout (headline at the top) is swapped for one that
+    keeps the face free, and the activity says so."""
+    from app import composer, pipeline
+    monkeypatch.setattr(pipeline, "find_faces", lambda img: [[200, 40, 300, 170]])  # fake photos are 512×512
+    post = client.post("/api/posts", json={"idea": "AI receptionist for a busy clinic", "template": "spotlight"}).json()
+    post = wait_for(client, post["id"], ["pending_review", "failed"])
+    assert post["status"] == "pending_review", post["error"]
+    b = post["brief"]
+    assert b["_faces"] == [[200, 40, 300, 170]] and b["_photo_size"] == [512, 512]
+    assert b["template"] != "spotlight" and composer.face_fit(b["template"], b, (512, 512)) <= pipeline.FACE_OK
+    assert composer.face_fit("spotlight", b, (512, 512)) > 0.5
+    assert any("would cover a face" in e["what"] for e in client.get(f"/api/posts/{post['id']}").json() and
+               pipeline_events(post["id"]))
+    page = client.get(f"/posts/{post['id']}").text
+    assert "Try other layouts" in page and "covers a face" in page and "face found, kept free of text" in page
+
+
+def pipeline_events(post_id):
+    from app import pipeline
+    return run(pipeline.events(post_id))
+
+
+def test_same_picture_in_another_layout_from_dashboard_and_email(client):
+    from app.composer import LAYOUT_NAMES
+    sent.clear()
+    post = client.post("/api/posts", json={"idea": "Structured cabling for a new office", "template": "wave"}).json()
+    post = wait_for(client, post["id"], ["pending_review", "failed"])
+    raw, captions = post["raw_image_path"], post["captions"]
+    # previews of every layout (made once, then kept)
+    for layout in ("glass", "neon", "clean"):
+        r = client.get(f"/posts/{post['id']}/layout/{layout}.jpg", follow_redirects=False)
+        assert r.status_code == 302 and client.get(r.headers["location"].replace("http://testserver", "")).status_code == 200
+    assert client.get(f"/posts/{post['id']}/layout/nonsense.jpg").status_code == 404
+    with TestClient(app) as anon:
+        assert anon.get(f"/posts/{post['id']}/layout/glass.jpg").status_code == 401
+
+    # dashboard: switch to Glass → same picture and captions, a new design, a new approval email
+    mails = len(sent)
+    assert client.post(f"/api/posts/{post['id']}/layout", json={"layout": "glass"}).status_code == 200
+    post = wait_for(client, post["id"], ["pending_review", "failed"])
+    assert post["brief"]["template"] == "glass" and post["raw_image_path"] == raw and post["captions"] == captions
+    assert "-glass" in post["final_image_url"] and len(sent) == mails + 1 and post["attempt"] == 1
+    assert "Layout: Glass" in sent[-1]["html"] and "Try other layouts" in sent[-1]["html"]
+
+    # email: the "Try other layouts" link opens a page of previews; tapping one switches
+    url = re.search(r'href="http://testserver(/review/[^"]+action=layouts[^"]*)"', sent[-1]["html"]).group(1).replace("&amp;", "&")
+    page = client.get(url)
+    assert page.status_code == 200 and "Try other layouts" in page.text and LAYOUT_NAMES["neon"] in page.text
+    token = re.search(r"t=([0-9a-f]+)", url).group(1)
+    assert client.get(f"/review/{post['id']}/layout/neon.jpg?t=bad").status_code == 403
+    assert client.get(f"/review/{post['id']}/layout/neon.jpg?t={token}", follow_redirects=False).status_code == 302
+    done = client.post(f"/review/{post['id']}", data={"action": "layouts", "t": token, "layout": "neon"})
+    assert done.status_code == 200 and "Changing to Neon tech" in done.text
+    post = wait_for(client, post["id"], ["pending_review", "failed"])
+    assert post["brief"]["template"] == "neon" and post["captions"] == captions
+
+    # once approved, the layout can't change any more
+    client.post(f"/api/posts/{post['id']}/approve")
+    assert client.post(f"/api/posts/{post['id']}/layout", json={"layout": "arch"}).status_code == 409
+    late = client.post(f"/review/{post['id']}", data={"action": "layouts", "t": token, "layout": "arch"})
+    assert "Already handled" in late.text and get(client, post["id"])["brief"]["template"] == "neon"
+
+
+def test_message_headline_keeps_every_word():
+    from app.composer import fit
+    from app.writer import message_headline
+    assert message_headline("YOUR SAFETY, OUR PRIORITY — SEE MORE, WORRY LESS! 🔒") == \
+        ("YOUR SAFETY,", "OUR PRIORITY", "SEE MORE, WORRY LESS!")
+    assert message_headline("Reliable IT Operations & Infrastructure Services") == \
+        ("Reliable IT Operations &", "Infrastructure Services", "")
+    assert message_headline("Cybersecurity") == ("Cybersecurity", "", "")
+    # a line that is too long gets smaller, never shorter: no word is ever dropped
+    f, lines = fit("Infrastructure Management Services For Every Office", 900, 300, 80, 76, 1)
+    assert " ".join(lines) == "Infrastructure Management Services For Every Office"
