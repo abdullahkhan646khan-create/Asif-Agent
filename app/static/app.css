@@ -663,3 +663,4 @@ textarea.ai-filled { animation: ai-fill 1.3s ease-out 2; }
 .layout-opt.noimg .layout-img { animation: none; }
 .layout-name { padding: 0 2px 2px; line-height: 1.3; }
 .layout-opt.on .layout-name { color: #067647; }
+.style-chips { margin-bottom: 18px; }

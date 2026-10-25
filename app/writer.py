@@ -783,3 +783,146 @@ async def make_copy(brand: Brand, idea: str, brief: dict, plan: dict, history: l
     if problems:
         out["_variety_warning"] = problems
     return out
+
+
+# ---------- the Showcase post: an infographic poster with several photos ----------
+
+SHOWCASE_LIMITS = {"title": 26, "title_highlight": 16, "tagline": 64, "banner_top": 32, "banner_highlight": 24,
+                   "banner_bottom": 40, "section_title": 38, "why_title": 28, "cta": 48}
+SHOWCASE_ITEM, SHOWCASE_WHY, SHOWCASE_BADGE = 26, 40, 22
+BADGE_ICONS = ("engineer", "quality", "support", "speed", "security", "cloud", "ai", "network")
+
+
+def _showcase_system(brand: Brand) -> str:
+    return f"""You are the senior creative director for {brand.name}. Write the content of ONE "Showcase" post: a rich
+infographic poster that explains one service with several photos (like a one-page brochure).
+
+BRAND KIT
+{brand.context_text(all_services=True)}
+
+RULES
+- Short, punchy, natural English. title + title_highlight read as ONE title and never repeat a word
+  ("Structured Cabling" + "Solutions").
+- Only facts from the brand kit. Never "leading", "best", "#1", "zero downtime", "free", "100%", numbers of years or
+  clients, prices, guarantees or awards. No phone numbers or websites (the poster's footer has them).
+- 5 items = the parts of the service, 2-4 words each. 4 "why" points = concrete reasons. 3 badges.
+- Photo descriptions: realistic premium photography in Dubai/UAE settings, no text, logos or screens with writing;
+  people on technical work wear white safety helmets. Every photo is different (subject, angle, place).
+
+Reply with ONLY this JSON object:
+{{"service": "<exact service name>", "title": "<max {SHOWCASE_LIMITS['title']} chars>",
+ "title_highlight": "<1-2 words, max {SHOWCASE_LIMITS['title_highlight']} chars>", "tagline": "<max {SHOWCASE_LIMITS['tagline']} chars>",
+ "banner_top": "<max {SHOWCASE_LIMITS['banner_top']} chars>", "banner_highlight": "<max {SHOWCASE_LIMITS['banner_highlight']} chars, shown in yellow>",
+ "banner_bottom": "<max {SHOWCASE_LIMITS['banner_bottom']} chars>", "section_title": "<max {SHOWCASE_LIMITS['section_title']} chars, e.g. Our ... Services>",
+ "items": [{{"label": "<max {SHOWCASE_ITEM} chars>", "photo": "<12-25 words>"}}, ... exactly 5],
+ "why_title": "<max {SHOWCASE_LIMITS['why_title']} chars, e.g. Why Choose {brand.name}?>", "why": ["<max {SHOWCASE_WHY} chars>", ... exactly 4],
+ "badges": [{{"label": "<max {SHOWCASE_BADGE} chars>", "icon": "{'|'.join(BADGE_ICONS)}"}}, ... exactly 3],
+ "cta": "<max {SHOWCASE_LIMITS['cta']} chars, an invitation such as Contact us today for a consultation!>",
+ "hero_photo": "<40-70 words: the main photo>", "side_photos": ["<15-25 words>", "<15-25 words>"],
+ "why_photo": "<15-25 words>"}}"""
+
+
+def _check_showcase(brand: Brand):
+    def check(d: dict) -> list[str]:
+        p = []
+        for k, limit in SHOWCASE_LIMITS.items():
+            v = str(d.get(k) or "").strip()
+            if not v:
+                p.append(f"'{k}' is missing")
+            elif len(v) > limit:
+                p.append(f"'{k}' is {len(v)} characters; max {limit}")
+        items, why, badges = d.get("items") or [], d.get("why") or [], d.get("badges") or []
+        if len(items) != 5 or not all(isinstance(i, dict) and str(i.get("label") or "").strip() for i in items):
+            p.append("give exactly 5 items, each with a label and a photo")
+        if len(why) != 4:
+            p.append("give exactly 4 'why' points")
+        if len(badges) != 3:
+            p.append("give exactly 3 badges")
+        for i in items:
+            if isinstance(i, dict) and len(str(i.get("label") or "")) > SHOWCASE_ITEM:
+                p.append(f"item label '{i.get('label')}' is too long; max {SHOWCASE_ITEM}")
+        p += [f"why point '{w}' is too long; max {SHOWCASE_WHY}" for w in why if len(str(w)) > SHOWCASE_WHY]
+        p += [f"badge '{b.get('label')}' is too long; max {SHOWCASE_BADGE}" for b in badges
+              if isinstance(b, dict) and len(str(b.get("label") or "")) > SHOWCASE_BADGE]
+        if len(d.get("side_photos") or []) != 2 or not str(d.get("hero_photo") or "").strip() or not d.get("why_photo"):
+            p.append("hero_photo, 2 side_photos and why_photo are needed")
+        title = {w.lower() for w in re.findall(r"\w+", str(d.get("title") or ""))}
+        if title & {w.lower() for w in re.findall(r"\w+", str(d.get("title_highlight") or ""))}:
+            p.append("title_highlight repeats a word of the title; they are read together as one title")
+        texts = [d.get(k) for k in SHOWCASE_LIMITS] + list(why) + [i.get("label") for i in items if isinstance(i, dict)] \
+            + [b.get("label") for b in badges if isinstance(b, dict)]
+        claims = unsupported_claims(texts) + [m.group(0) for t in texts for m in re.finditer(
+            r"\b(?:leading|best|free|no\.?\s?1|eliminat\w*|never fails?)\b", str(t or ""), re.I)]
+        if claims:
+            p.append(f"remove unconfirmed claims {sorted(set(claims))}: only facts from the brand kit")
+        if re.search(r"\+?\d[\d\s-]{7,}\d|www\.|\.ae\b|\.com\b", " ".join(str(t or "") for t in texts)):
+            p.append("no phone numbers or websites in the text (the footer has them)")
+        svc = d.get("service")
+        if svc and svc != "General" and not brand.service(svc):
+            p.append(f"service '{svc}' is not in the list; use an exact name")
+        return p
+    return check
+
+
+async def make_showcase_brief(brand: Brand, idea: str, plan: dict, history: list[dict], layout: str,
+                              feedback: dict | None = None, message: str = "") -> dict:
+    """The words and photo descriptions of a Showcase post (an idea, or the planner's service when empty)."""
+    service = plan["service"]
+    user = (f"IDEA: {idea}\nIf the idea is about one of the services, that is the service; otherwise use {service}."
+            if idea else f"SERVICE: {service}") + f"\nAUDIENCE FOCUS: {plan.get('industry', 'UAE businesses')}"
+    if plan.get("service_source") == "user":
+        user += f"\nSERVICE (chosen by the client, use it): {service}"
+    if message.strip():
+        user += f"\nTITLE (the client's own words, used word for word): \"{message.strip()}\""
+    recent = [h["brief"] for h in history[:10] if (h.get("brief") or {}).get("template", "").startswith("sc_")]
+    if recent:
+        user += "\nRECENT SHOWCASE TITLES - write different ones:\n" + "\n".join(
+            f"- {b.get('headline_top', '')} {b.get('headline_highlight', '')}" for b in recent)
+    if feedback:
+        user += f"\nTHE PREVIOUS VERSION WAS REJECTED. Reason: {feedback.get('reason') or '(none given)'}. Make it clearly different."
+    data, used = await ask_json(_showcase_system(brand), user, _check_showcase(brand), temperature=0.8)
+    trim = lambda v, n: _trim(v, n)  # noqa: E731
+    c = {k: trim(data.get(k), n) for k, n in SHOWCASE_LIMITS.items()}
+    items = [i for i in data.get("items") or [] if isinstance(i, dict)][:5]
+    while len(items) < 5:
+        items.append({"label": "", "photo": ""})
+    c["items"] = [{"label": trim(i.get("label"), SHOWCASE_ITEM)} for i in items]
+    c["why"] = [trim(w, SHOWCASE_WHY) for w in (data.get("why") or [])[:4]]
+    badges = [b for b in data.get("badges") or [] if isinstance(b, dict)][:3]
+    c["badges"] = [{"label": trim(b.get("label"), SHOWCASE_BADGE),
+                    "icon": b.get("icon") if b.get("icon") in BADGE_ICONS else "quality"} for b in badges]
+    if message.strip():
+        top, hi, line = message_headline(message)
+        c.update(title=top, title_highlight=hi, **({"tagline": line} if line else {}))
+    svc = data.get("service")
+    if plan.get("service_source") == "user" and brand.service(service):
+        svc = service
+    sides = list(data.get("side_photos") or [])[:2] + ["", ""]
+    sheet = [str(i.get("photo") or "") for i in items] + [sides[0], sides[1], str(data.get("why_photo") or "")]
+    return {
+        **c, "template": layout, "service": svc if svc and brand.service(svc) else "General",
+        # the usual fields too, so emails, the dashboard and the no-repeat checks work for Showcase posts as well
+        "headline_top": c["title"], "headline_highlight": c["title_highlight"], "subheadline": c["tagline"],
+        "benefits": c["why"][:3], "angle": c["tagline"], "image_prompt": str(data.get("hero_photo") or ""),
+        "_sheet_photos": sheet, "_model": used, "_plan": plan, **({"_message": message.strip()} if message.strip() else {}),
+    }
+
+
+def showcase_prompts(brand: Brand, brief: dict) -> tuple[str, str]:
+    """The two Gemini pictures of a Showcase post: the hero photo, and one sheet of 9 photos cut into tiles."""
+    v = brand.profile["visual"]
+    avoid = ", ".join(v["avoid_in_images"])
+    no_text = ("The image must contain absolutely NO text, letters, numbers, words, logos, labels, signs or "
+               "watermarks anywhere.")
+    hero = (f"Generate a photo. {brief['image_prompt']}\n\nStyle: {v['photo_style_prompt']}.\nFormat: landscape 4:3, "
+            f"high resolution.\nStrictly avoid: {avoid}. {no_text} Create the image now, do not ask questions.")
+    photos = brief.get("_sheet_photos") or []
+    lines = "\n".join(f"- Photo {n} ({pos}): {desc}" for n, (pos, desc) in enumerate(zip(
+        ["top left", "top middle", "top right", "middle left", "centre", "middle right", "bottom left", "bottom middle",
+         "bottom right"], photos + [photos[0] if photos else ""]), 1))
+    sheet = ("Generate ONE square image: a photo contact sheet with exactly 9 separate photographs in a 3 by 3 grid. "
+             "All 9 photos are the same size and are separated by straight, even, pure white lines about 2% of the "
+             "image wide, with a white border around the grid. Each cell is one complete, realistic, premium "
+             f"photograph in this style: {v['photo_style_prompt']}.\n{lines}\n"
+             f"Strictly avoid: {avoid}. {no_text} Create the image now, do not ask questions.")
+    return hero, sheet

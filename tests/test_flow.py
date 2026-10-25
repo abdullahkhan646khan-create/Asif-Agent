@@ -59,6 +59,18 @@ async def fake_ask_json(system, user, check=None, temperature=0.7):
                 "headline_highlight": words(rnd, 1), "subheadline": words(rnd, 5), "image_prompt": words(rnd, 50)}
         assert not (check(data) if check else []), check(data)
         return data, "fake/model"
+    if '"Showcase" post' in system:  # the infographic poster
+        data = {"service": "Structured Cabling", "title": "Structured Cabling", "title_highlight": "Solutions",
+                "tagline": words(rnd, 5).capitalize(), "banner_top": "Connect with", "banner_highlight": "confidence",
+                "banner_bottom": words(rnd, 4).capitalize(), "section_title": "Our Cabling Services",
+                "items": [{"label": words(rnd, 2).title(), "photo": words(rnd, 12)} for _ in range(5)],
+                "why_title": "Why Choose Amanasoft?", "why": [words(rnd, 4).capitalize() for _ in range(4)],
+                "badges": [{"label": "Certified Engineers", "icon": "engineer"}, {"label": "Quality Assurance", "icon": "quality"},
+                           {"label": "24/7 Support", "icon": "support"}],
+                "cta": "Contact us today for a consultation!", "hero_photo": words(rnd, 40),
+                "side_photos": [words(rnd, 15), words(rnd, 15)], "why_photo": words(rnd, 15)}
+        assert not (check(data) if check else []), check(data)
+        return data, "fake/model"
     if "SAMPLE caption for a DEMO" in system:
         data = {"title": words(rnd, 4).capitalize(), "facebook": words(rnd, 30).capitalize() + ". #Dubai #Luxury"}
         assert not (check(data) if check else []), check(data)
@@ -1416,3 +1428,92 @@ def test_message_headline_keeps_every_word():
     # a line that is too long gets smaller, never shorter: no word is ever dropped
     f, lines = fit("Infrastructure Management Services For Every Office", 900, 300, 80, 76, 1)
     assert " ".join(lines) == "Infrastructure Management Services For Every Office"
+
+
+# ---------- the Showcase post: an infographic poster with several photos ----------
+
+def photo_sheet(border=30, gutter=18, size=1024) -> bytes:
+    """What Gemini makes for a Showcase post: 9 photos in a 3×3 grid with white lines between them."""
+    import random
+    from PIL import ImageDraw
+    img = Image.new("RGB", (size, size), "white")
+    d, rnd = ImageDraw.Draw(img), random.Random(5)
+    cell = (size - 2 * border - 2 * gutter) / 3
+    for i in range(3):
+        for j in range(3):
+            x0, y0 = border + j * (cell + gutter), border + i * (cell + gutter)
+            d.rectangle((x0, y0, x0 + cell, y0 + cell), fill=tuple(rnd.randint(0, 120) for _ in range(3)))
+            for _ in range(30):
+                x, y = rnd.uniform(x0, x0 + cell - 40), rnd.uniform(y0, y0 + cell - 40)
+                d.rectangle((x, y, x + rnd.uniform(10, 40), y + rnd.uniform(10, 40)), fill=tuple(rnd.randint(0, 255) for _ in range(3)))
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_photo_sheet_is_cut_into_nine_photos():
+    from app.showcase import cut_sheet
+    cells = cut_sheet(photo_sheet())
+    assert cells and len(cells) == 9 and all(Image.open(io.BytesIO(c)).width > 250 for c in cells)
+    assert len(cut_sheet(photo_sheet(border=0)) or []) == 9
+    assert cut_sheet(fake_photo()) is None  # one ordinary picture: not a sheet
+
+
+def test_showcase_text_is_checked_for_promises():
+    from app.brand import load_brand
+    from app.writer import _check_showcase
+    check = _check_showcase(load_brand())
+    bad = {"title": "Smart Cabling Solutions", "title_highlight": "Cabling", "tagline": "Leading provider in the UAE",
+           "banner_top": "Connect with", "banner_highlight": "Zero Downtime", "banner_bottom": "x", "section_title": "x",
+           "why_title": "x", "cta": "Call +971 55 940 8284 for a free survey", "items": [{"label": "a"}] * 5,
+           "why": ["a"] * 4, "badges": [{"label": "b"}] * 3, "hero_photo": "x", "side_photos": ["a", "b"], "why_photo": "c"}
+    problems = " | ".join(check(bad))
+    assert "repeats a word" in problems and "unconfirmed claims" in problems and "phone numbers" in problems
+    assert "zero downtime" in problems.lower() and "leading" in problems.lower() and "free" in problems.lower()
+
+
+def test_showcase_post_end_to_end(client, monkeypatch):
+    """Prompt → the poster text → a hero photo and a sheet of 9 photos (cut into tiles) → one of 4 Showcase layouts
+    → approval email; the client can switch between the 4 Showcase layouts only."""
+    from app import pipeline, showcase
+    calls = []
+
+    async def gen(prompt):
+        calls.append(prompt)
+        assert "NO text" in prompt
+        return (photo_sheet() if "contact sheet" in prompt else fake_photo()), "A"
+    monkeypatch.setattr(imagegen.pool, "generate", gen)
+    sent.clear()
+    r = client.post("/api/posts", json={"idea": "Structured cabling for offices and data centers", "style": "showcase",
+                                         "template": "sc_light"})
+    assert r.status_code == 200, r.text
+    post = wait_for(client, r.json()["id"], ["pending_review", "failed"])
+    assert post["status"] == "pending_review", post["error"]
+    b = post["brief"]
+    assert b["template"] == "sc_light" and b["title"] == "Structured Cabling" and len(b["items"]) == 5 and len(b["why"]) == 4
+    assert len(calls) == 2 and "3 by 3 grid" in calls[1]  # the hero photo + one sheet of 9 photos
+    assert len(b["_photos"]["tiles"]) == 6 and b["_photos"]["side1"].endswith("-p6.jpg")
+    img = Image.open(io.BytesIO(client.get(post["final_image_url"].replace("http://testserver", "")).content))
+    assert img.size == (1080, 1350)
+    assert "Showcase · Light" in sent[-1]["html"]
+    page = client.get(f"/posts/{post['id']}").text
+    for name in showcase.LAYOUTS.values():
+        assert name in page
+    assert "Dark photo" not in page.split("Try other layouts")[1].split("Activity")[0]  # only the Showcase family
+    assert client.post(f"/api/posts/{post['id']}/layout", json={"layout": "wave"}).status_code == 409
+    assert client.post(f"/api/posts/{post['id']}/layout", json={"layout": "sc_grid"}).status_code == 200
+    post = wait_for(client, post["id"], ["pending_review", "failed"])
+    assert post["brief"]["template"] == "sc_grid" and len(calls) == 2  # redrawn: no new pictures
+    preview = client.get(f"/posts/{post['id']}/layout/sc_split.jpg", follow_redirects=False)
+    assert preview.status_code == 302
+
+    # Auto takes turns between the 4 layouts; a sheet that can't be cut falls back to earlier photos
+    async def no_sheet(prompt):
+        calls.append(prompt)
+        return fake_photo(), "A"
+    monkeypatch.setattr(imagegen.pool, "generate", no_sheet)
+    post = wait_for(client, client.post("/api/posts", json={"style": "showcase"}).json()["id"], ["pending_review", "failed"])
+    assert post["status"] == "pending_review", post["error"]
+    assert post["brief"]["template"] in showcase.LAYOUTS and post["brief"]["template"] != "sc_grid"
+    assert any("could not be cut" in e["what"] for e in pipeline_events(post["id"]))
+    assert "Showcase" in client.get("/").text

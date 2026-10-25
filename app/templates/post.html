@@ -126,8 +126,7 @@
         {% for l in layouts %}
         <button type="button" class="layout-opt{{ ' on' if l.current }}{{ ' covers' if l.covers_face }}" data-layout="{{ l.key }}"
                 {{ 'disabled' if l.current or l.covers_face }} title="{{ 'Covers a face in this picture' if l.covers_face else l.name }}">
-          <span class="layout-img"><img src="/posts/{{ post.id }}/layout/{{ l.key }}.jpg" alt="" loading="lazy" decoding="async"
-                onerror="this.closest('.layout-opt').classList.add('noimg')"></span>
+          <span class="layout-img">{% if previews[l.key] %}<img src="{{ previews[l.key] }}" alt="" decoding="async">{% endif %}</span>
           <span class="layout-name">{{ l.name }}{% if l.current %} · current{% elif l.covers_face %} · covers a face{% endif %}</span>
         </button>
         {% endfor %}
@@ -215,6 +214,21 @@
 {% block scripts %}
 <script>
 document.getElementById("badge").innerHTML = badge({{ post.status|tojson }});
+// previews not made yet appear by themselves as soon as they are ready
+(function fillPreviews(round = 0) {
+  const empty = [...document.querySelectorAll(".layout-opt")].filter((b) => !b.querySelector("img"));
+  if (!empty.length || round > 60) return;
+  setTimeout(async () => {
+    try {
+      const ready = await api("GET", "/api/posts/{{ post.id }}/previews");
+      empty.forEach((b) => {
+        const url = ready[b.dataset.layout];
+        if (url) b.querySelector(".layout-img").innerHTML = `<img src="${esc(url)}" alt="" decoding="async">`;
+      });
+    } catch (e) {}
+    fillPreviews(round + 1);
+  }, 2500);
+})();
 document.getElementById("layouts")?.addEventListener("click", async (e) => {
   const b = e.target.closest("button[data-layout]");
   if (!b || b.disabled) return;

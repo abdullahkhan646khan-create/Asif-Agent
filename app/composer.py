@@ -24,7 +24,9 @@ TEMPLATES = ("wave", "spotlight", "skyline", "split", "cards", "frame",
              "glass", "editorial", "arch", "band", "corporate", "neon")
 LAYOUT_NAMES = {"wave": "Blue wave", "spotlight": "Dark photo", "skyline": "Dubai night", "split": "Diagonal split",
                 "cards": "Benefit cards", "frame": "White card", "glass": "Glass", "editorial": "Editorial",
-                "arch": "Arch", "band": "Bold band", "corporate": "Corporate", "neon": "Neon tech", "clean": "Simple photo"}
+                "arch": "Arch", "band": "Bold band", "corporate": "Corporate", "neon": "Neon tech", "clean": "Simple photo",
+                "sc_classic": "Showcase · Classic", "sc_light": "Showcase · Light", "sc_split": "Showcase · Split",
+                "sc_grid": "Showcase · Grid"}
 
 ICON_PHONE = chr(0xE0CD)
 ICON_WEB = chr(0xE894)

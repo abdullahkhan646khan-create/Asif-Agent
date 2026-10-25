@@ -15,8 +15,8 @@
       <input type="hidden" name="layout" value="{{ l.key }}">
       <button class="layout-opt{{ ' on' if l.current }}{{ ' covers' if l.covers_face }}" style="width:100%"
               {{ 'disabled' if l.current or l.covers_face }}>
-        <span class="layout-img"><img src="/review/{{ post.id }}/layout/{{ l.key }}.jpg?t={{ token }}" alt="" loading="lazy"
-              decoding="async" onerror="this.closest('.layout-opt').classList.add('noimg')"></span>
+        <span class="layout-img"><img src="{{ previews[l.key] or ('/review/' ~ post.id ~ '/layout/' ~ l.key ~ '.jpg?t=' ~ token) }}"
+              alt="" decoding="async" onerror="this.closest('.layout-opt').classList.add('noimg')"></span>
         <span class="layout-name">{{ l.name }}{% if l.current %} · current{% elif l.covers_face %} · covers a face{% endif %}</span>
       </button>
     </form>

@@ -42,8 +42,17 @@
         <input type="datetime-local" name="publish_at" id="publish-at" min="{{ min_time }}">
       </label>
     </div>
+    <div class="field-label">Post style</div>
+    <div class="chips style-chips" role="radiogroup" aria-label="Post style">
+      <label><input type="radio" name="style" value="normal" checked><span>Normal post</span></label>
+      <label><input type="radio" name="style" value="showcase"><span>✨ Showcase (poster with several photos)</span></label>
+    </div>
     <div class="field-label">Design</div>
-    <div class="chips" role="radiogroup" aria-label="Layout">
+    <div class="chips" id="sc-chips" role="radiogroup" aria-label="Showcase layout" hidden>
+      <label><input type="radio" name="sc_template" value="" checked><span>✨ Auto (AI picks)</span></label>
+      {% for key, name in showcase_layouts.items() %}<label><input type="radio" name="sc_template" value="{{ key }}"><span>{{ name.split(" · ")[1] }}</span></label>{% endfor %}
+    </div>
+    <div class="chips" id="normal-chips" role="radiogroup" aria-label="Layout">
       <label><input type="radio" name="template" value="" checked><span>✨ Auto (AI picks)</span></label>
       {% for t in layouts %}<label><input type="radio" name="template" value="{{ t }}"><span>{{ LAYOUT_NAMES.get(t, t) }}</span></label>{% endfor %}
       <label><input type="radio" name="template" value="clean"><span>Simple photo</span></label>
@@ -142,6 +151,11 @@ document.getElementById("stats").addEventListener("click", (e) => {
   if (b) { filter = filter === b.dataset.f ? "all" : b.dataset.f; render(); }
 });
 
+document.querySelectorAll('input[name="style"]').forEach((r) => r.addEventListener("change", () => {
+  const sc = document.querySelector('input[name="style"]:checked').value === "showcase";
+  document.getElementById("sc-chips").hidden = !sc;
+  document.getElementById("normal-chips").hidden = sc;
+}));
 document.getElementById("when-mode").addEventListener("change", (e) => {
   document.getElementById("when-at-wrap").hidden = e.target.value !== "at";
 });
@@ -160,7 +174,8 @@ document.getElementById("new-post").addEventListener("submit", async (e) => {
   btn.disabled = true;
   try {
     const p = await api("POST", "/api/posts", {
-      idea: f.get("idea") || "", message: f.get("message") || "", template: f.get("template") || null,
+      idea: f.get("idea") || "", message: f.get("message") || "", style: f.get("style") || "normal",
+      template: (f.get("style") === "showcase" ? f.get("sc_template") : f.get("template")) || null,
       service: f.get("service") || null, post_type: f.get("post_type") || null, publish_at: at,
     });
     posts.unshift(p); filter = "all"; render();

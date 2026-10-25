@@ -27,7 +27,10 @@ from .timeutil import fmt, iso, now_utc, parse
 from .llm import transcribe
 from .uploads import media_label, pictures_for_ai
 from .variety import fingerprint, looks_like_earlier, make_plan, plan_label
-from .writer import image_prompt, make_brief, make_clean_brief, make_copy, make_upload_brief
+from .showcase import LAYOUTS as SHOWCASE_LAYOUTS, compose_showcase, cut_sheet
+from .showcase import face_fit as showcase_fit
+from .writer import (image_prompt, make_brief, make_clean_brief, make_copy, make_showcase_brief, make_upload_brief,
+                     showcase_prompts)
 
 log = logging.getLogger("pipeline")
 
@@ -133,6 +136,42 @@ async def generate(post_id: str) -> None:
             # industry demos and a typed idea with "Simple photo" use the clean style; everything else gets a brand
             # layout (a typed idea that isn't about one of the services becomes a simple photo after its brief)
             clean = bool(demo) or (post.get("template_pref") == "clean" and bool(idea))
+            showcase = prefs.get("style") == "showcase"
+
+            if showcase and (not post.get("brief") or not post.get("captions")):
+                # the Showcase post: an infographic poster with several photos
+                stage = "writing"
+                post = await _stage(post_id, stage)
+                plan = prefs.get("plan")
+                if not plan:
+                    plan = make_plan(past, prefs.get("service"), None, None, brand)
+                    prefs = {**prefs, "plan": plan}
+                    post = await store.update_post(post_id, prefs=prefs)
+                if not post.get("brief"):
+                    layout = post.get("template_pref") if post.get("template_pref") in SHOWCASE_LAYOUTS else \
+                        next_showcase_layout(past)
+                    brief = await make_showcase_brief(brand, idea, plan, past, layout, feedback, prefs.get("message") or "")
+                    post = await store.update_post(post_id, brief=brief)
+                try:
+                    platforms = await publisher.caption_platforms()
+                except Exception as e:
+                    platforms = None
+                    log.warning("Could not read the Buffer channels (%s); using POST_PLATFORMS", e)
+                captions = await make_copy(brand, idea, post["brief"], plan, past, feedback, platforms)
+                post = await store.update_post(post_id, captions=captions)
+
+            if showcase and (not post.get("raw_image_path") or not post["brief"].get("_photos")):
+                stage = "imaging"
+                post = await _stage(post_id, stage, "Creating the photos with Gemini (2 pictures)")
+                hero_prompt, sheet_prompt = showcase_prompts(brand, post["brief"])
+                if not post.get("raw_image_path"):
+                    raw, slot = await pool.generate(hero_prompt)
+                    path = f"{post_id}/v{v}-raw.png"
+                    await store.save_file(path, raw, "image/png")
+                    post = await store.update_post(post_id, raw_image_path=path,
+                                                   brief={**post["brief"], "_gemini_account": slot, "_fingerprint": fingerprint(raw)})
+                photos = await _showcase_photos(post_id, post, sheet_prompt, v)
+                post = await store.update_post(post_id, brief={**post["brief"], "_photos": photos})
 
             if mode == "upload" and (not post.get("brief") or not post.get("captions")):
                 # the client's own photo(s) or video: the AI looks at it and writes the title and captions
@@ -231,7 +270,7 @@ async def generate(post_id: str) -> None:
                 if "_faces" not in post["brief"]:
                     post = await store.update_post(post_id, brief=await _face_check(post_id, post["brief"], raw))
                 layout = post["brief"]["template"]
-                final = await asyncio.to_thread(compose, layout, raw, post["brief"], brand)
+                final = await render_design(post, layout)
                 path = f"{post_id}/v{v}-{layout}.jpg"  # a new address per layout: no browser shows an old copy
                 url = await store.save_file(path, final, "image/jpeg")
                 thumb = await asyncio.to_thread(thumbnail, final)
@@ -288,7 +327,7 @@ async def generate(post_id: str) -> None:
 async def create(idea: str, template_pref: str | None, service: str | None = None, post_type: str | None = None,
                  scheduled_for=None, source: str = "manual", auto_publish: bool = False,
                  if_no_answer: str = "wait", by: str = "dashboard", industry: str | None = None,
-                 message: str = "") -> dict:
+                 message: str = "", style: str = "normal") -> dict:
     """Everything is optional: with no idea and everything on Auto, the planner picks a fresh topic.
     scheduled_for (UTC datetime) = when it should go out; None = right after approval."""
     brand = load_brand()
@@ -304,6 +343,8 @@ async def create(idea: str, template_pref: str | None, service: str | None = Non
         idea, template_pref, scheduled_for = f"Demo: {industry_name(industry)}", None, None
     else:
         prefs["mode"] = "idea" if idea else "auto"
+        if style == "showcase":
+            prefs["style"] = "showcase"
     store = get_store()
     post = await store.create_post(idea, template_pref or None, prefs, iso(scheduled_for) if scheduled_for else None)
     if not idea:
@@ -312,6 +353,8 @@ async def create(idea: str, template_pref: str | None, service: str | None = Non
     what = "Created by the daily schedule" if source == "schedule" else (
         f"Industry demo: {industry_name(industry)}" if prefs.get("mode") == "demo" else
         f"Created from the idea “{idea}”" if idea else "Created with an Auto topic")
+    if prefs.get("style") == "showcase":
+        what = "✨ Showcase post · " + what
     if scheduled_for:
         what += f" · to go out {fmt(scheduled_for)}" + (" automatically" if prefs["auto_publish"] else "")
     await note(post["id"], what, "schedule" if source == "schedule" else by)
@@ -319,9 +362,68 @@ async def create(idea: str, template_pref: str | None, service: str | None = Non
     return post
 
 
+# ---------- Showcase posts ----------
+
+def next_showcase_layout(history: list[dict]) -> str:
+    """The Showcase layout used longest ago (so they take turns)."""
+    used = [(h.get("brief") or {}).get("template") for h in history]  # newest first
+    order = list(SHOWCASE_LAYOUTS)
+    return min(order, key=lambda t: (t in used, -used.index(t) if t in used else 0, order.index(t)))
+
+
+async def _showcase_photos(post_id: str, post: dict, sheet_prompt: str, v: int) -> dict:
+    """One Gemini picture with 9 photos, cut into the side, "why" and service photos. If the sheet can't be cut
+    (twice), photos of earlier posts are used, so the post is still made."""
+    store = get_store()
+    cells = None
+    for attempt in range(2):
+        sheet, _ = await pool.generate(sheet_prompt if not attempt else sheet_prompt +
+                                       "\nIMPORTANT: a clean 3 by 3 grid of 9 separate photos with white lines between them.")
+        await store.save_file(f"{post_id}/v{v}-sheet{attempt + 1}.png", sheet, "image/png")
+        cells = await asyncio.to_thread(cut_sheet, sheet)
+        if cells:
+            break
+    if not cells:
+        await note(post_id, "The photo sheet could not be cut into photos; photos from earlier posts are used for the tiles")
+        library = [p["raw_image_path"] for p in await store.list_posts(60)
+                   if p["id"] != post_id and p.get("raw_image_path") and not is_upload(p)][:9]
+        paths = (library + [post["raw_image_path"]] * 9)[:9]
+    else:
+        paths = []
+        for n, cell in enumerate(cells, 1):
+            paths.append(f"{post_id}/v{v}-p{n}.jpg")
+            await store.save_file(paths[-1], cell, "image/jpeg")
+    return {"tiles": paths[:5] + [paths[8]], "side1": paths[5], "side2": paths[6], "why": paths[7]}
+
+
+def is_showcase(brief: dict | None) -> bool:
+    return str((brief or {}).get("template") or "").startswith("sc_")
+
+
+async def render_design(post: dict, layout: str, brief: dict | None = None) -> bytes:
+    """The finished design of this post in this layout (the same picture and words)."""
+    store, brief = get_store(), {**(brief or post["brief"]), "template": layout}
+    raw = await store.read_file(post["raw_image_path"])
+    if layout in SHOWCASE_LAYOUTS:
+        ph = brief["_photos"]
+        photos = {"hero": raw, "side1": await store.read_file(ph["side1"]), "side2": await store.read_file(ph["side2"]),
+                  "why": await store.read_file(ph["why"]), "tiles": [await store.read_file(t) for t in ph["tiles"]]}
+        return await asyncio.to_thread(compose_showcase, layout, photos, brief, load_brand())
+    return await asyncio.to_thread(compose, layout, raw, brief, load_brand())
+
+
 # ---------- layouts: faces stay free; the client can switch layout (same picture, same text) ----------
 
 ALL_LAYOUTS = (*TEMPLATES, "clean")
+
+
+def layouts_for(brief: dict | None) -> tuple:
+    """The layouts a post can switch between: the 4 Showcase layouts for a Showcase post, the others otherwise."""
+    return tuple(SHOWCASE_LAYOUTS) if is_showcase(brief) else ALL_LAYOUTS
+
+
+def layout_fit(layout: str, brief: dict, size) -> float:
+    return showcase_fit(layout, brief, size) if layout in SHOWCASE_LAYOUTS else face_fit(layout, brief, size)
 FACE_OK = 0.05  # a layout may cover at most this share of the faces (a hair's edge, not a face)
 _preview_locks: dict[str, asyncio.Lock] = {}
 
@@ -329,11 +431,12 @@ _preview_locks: dict[str, asyncio.Lock] = {}
 def pick_layout(brief: dict) -> str:
     """The planned layout if it keeps every face free, otherwise the next layout that does."""
     current, size = brief["template"], brief.get("_photo_size") or (1024, 1024)
-    if current == "clean" or face_fit(current, brief, size) <= FACE_OK:
+    if current == "clean" or layout_fit(current, brief, size) <= FACE_OK:
         return current
-    start = TEMPLATES.index(current) if current in TEMPLATES else 0
-    order = TEMPLATES[start + 1:] + TEMPLATES[:start]
-    fits = [(face_fit(t, brief, size), i, t) for i, t in enumerate(order)]
+    family = tuple(SHOWCASE_LAYOUTS) if is_showcase(brief) else TEMPLATES
+    start = family.index(current) if current in family else 0
+    order = family[start + 1:] + family[:start]
+    fits = [(layout_fit(t, brief, size), i, t) for i, t in enumerate(order)]
     good = [f for f in fits if f[0] <= FACE_OK]
     return (good or sorted(fits))[0][2]
 
@@ -349,7 +452,7 @@ async def _face_check(post_id: str, brief: dict, raw: bytes) -> dict:
             await note(post_id, f"{LAYOUT_NAMES.get(brief['template'], brief['template'])} would cover a face in this "
                                 f"picture → using {LAYOUT_NAMES.get(better, better)}")
             brief["template"] = better
-    elif faces and face_fit(brief["template"], brief, brief["_photo_size"]) > FACE_OK:
+    elif faces and layout_fit(brief["template"], brief, brief["_photo_size"]) > FACE_OK:
         await note(post_id, f"Note: {LAYOUT_NAMES.get(brief['template'])} covers part of a face in this picture")
     return brief
 
@@ -364,7 +467,7 @@ def layout_options(post: dict) -> list[dict]:
     brief = post.get("brief") or {}
     size = brief.get("_photo_size") or (1024, 1024)
     return [{"key": t, "name": LAYOUT_NAMES[t], "current": t == brief.get("template"),
-             "covers_face": face_fit(t, brief, size) > FACE_OK} for t in ALL_LAYOUTS]
+             "covers_face": layout_fit(t, brief, size) > FACE_OK} for t in layouts_for(brief)]
 
 
 async def layout_preview(post: dict, layout: str) -> str:
@@ -379,34 +482,56 @@ async def layout_preview(post: dict, layout: str) -> str:
         done = await store.get_setting(key) or {}
         if layout in done:
             return done[layout]
-        raw = await store.read_file(post["raw_image_path"])
-        full = await asyncio.to_thread(compose, layout, raw, {**post["brief"], "template": layout}, load_brand())
+        full = await render_design(post, layout)
         small = await asyncio.to_thread(thumbnail, full, 420)
         url = await store.save_file(f"{post['id']}/v{post['attempt']}-alt-{layout}.jpg", small, "image/jpeg")
         await store.set_setting(key, {**(await store.get_setting(key) or {}), layout: url})
         return url
 
 
+_preparing: set[str] = set()
+
+
 async def prepare_layouts(post_id: str) -> None:
     """Make every layout preview in the background, so "Try other layouts" opens quickly."""
-    for layout in ALL_LAYOUTS:
+    if post_id in _preparing:
+        return
+    _preparing.add(post_id)
+    try:
         post = await get_store().get_post(post_id)
-        if not post or post["status"] not in ("pending_review", "scheduled") or not can_preview(post):
-            return
-        try:
-            await layout_preview(post, layout)
-        except Exception:
-            log.exception("Layout preview %s for %s failed", layout, post_id)
+        for layout in layouts_for((post or {}).get("brief")):
+            post = await get_store().get_post(post_id)
+            if not post or post["status"] not in ("pending_review", "scheduled") or not can_preview(post):
+                return
+            try:
+                await layout_preview(post, layout)
+            except Exception:
+                log.exception("Layout preview %s for %s failed", layout, post_id)
+    finally:
+        _preparing.discard(post_id)
+
+
+async def ready_previews(post: dict) -> dict[str, str]:
+    """The previews already made, {layout: address}, read in one go so the page links straight to the pictures
+    (no slow round trip through the server per picture). Starts making the missing ones in the background."""
+    done = dict(await get_store().get_setting(f"alts_{post['id']}_{post['attempt']}") or {})
+    if (post.get("brief") or {}).get("_thumb") and post["brief"].get("template") not in done:
+        done[post["brief"]["template"]] = post["brief"]["_thumb"]  # the current design's own small picture
+    if any(layout not in done for layout in layouts_for(post.get("brief"))) and can_preview(post):
+        spawn(prepare_layouts(post["id"]))
+    return done
 
 
 def can_preview(post: dict) -> bool:
-    return not is_upload(post) and bool(post.get("brief")) and bool(post.get("raw_image_path"))
+    brief = post.get("brief")
+    return (not is_upload(post) and bool(brief) and bool(post.get("raw_image_path"))
+            and (not is_showcase(brief) or bool(brief.get("_photos"))))
 
 
 async def switch_layout(post_id: str, layout: str, by: str = "dashboard") -> dict | None:
     """Show the same picture and text in another layout; a new approval email follows."""
     post = await get_store().get_post(post_id)
-    if not post or layout not in ALL_LAYOUTS or not can_switch_layout(post):
+    if not post or layout not in layouts_for(post.get("brief")) or not can_switch_layout(post):
         return None
     if post["brief"].get("template") == layout:
         return post

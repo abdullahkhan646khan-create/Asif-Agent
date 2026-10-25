@@ -220,6 +220,7 @@ async def home(request: Request):
     if not logged_in(request):
         return RedirectResponse("/login", status_code=303)
     return page(request, "index.html", posts=real_posts(await get_store().list_posts(60)), layouts=TEMPLATES,
+                showcase_layouts=pipeline.SHOWCASE_LAYOUTS,
                 post_types=POST_TYPES, min_time=to_local_input(now_utc() + timedelta(minutes=5)))
 
 
@@ -238,7 +239,8 @@ async def post_page(request: Request, post_id: str):
                          publish_now=post["status"] in pipeline.CAN_PUBLISH_NOW,
                          reschedule=post["status"] in pipeline.CAN_RESCHEDULE,
                          switch_layout=pipeline.can_switch_layout(post)),
-                layouts=pipeline.layout_options(post) if pipeline.can_switch_layout(post) else [])
+                layouts=pipeline.layout_options(post) if pipeline.can_switch_layout(post) else [],
+                previews=await pipeline.ready_previews(post) if pipeline.can_switch_layout(post) else {})
 
 
 def is_demo(post: dict) -> bool:
@@ -289,6 +291,7 @@ class NewPost(BaseModel):
     service: str | None = None
     post_type: str | None = None
     publish_at: str | None = None  # Dubai date-time 'YYYY-MM-DDTHH:MM'; empty = right after approval
+    style: str = "normal"  # normal | showcase (an infographic poster with several photos)
 
 
 class Reason(BaseModel):
@@ -312,11 +315,15 @@ async def api_create(request: Request, body: NewPost):
         raise HTTPException(400, "Write a bit more about the idea, or leave it empty for a fresh topic")
     if len(body.message.strip()) > 150:
         raise HTTPException(400, "Keep the message on the post short: at most 150 characters")
-    template = body.template if body.template in TEMPLATES or body.template == "clean" else None
+    showcase = body.style == "showcase"
+    if showcase:
+        template = body.template if body.template in pipeline.SHOWCASE_LAYOUTS else None
+    else:
+        template = body.template if body.template in TEMPLATES or body.template == "clean" else None
     post_type = body.post_type if body.post_type in POST_TYPES else None
     when = future_time(body.publish_at)
     return await pipeline.create(body.idea, template, body.service or None, post_type, scheduled_for=when,
-                                 message=body.message)
+                                 message=body.message, style="showcase" if showcase else "normal")
 
 
 class NewDemo(BaseModel):
@@ -473,7 +480,7 @@ async def api_layout(request: Request, post_id: str, body: NewLayout):
 
 
 async def _preview_response(post: dict | None, layout: str):
-    if not post or layout not in pipeline.ALL_LAYOUTS or not pipeline.can_preview(post):
+    if not post or layout not in pipeline.layouts_for(post.get("brief")) or not pipeline.can_preview(post):
         raise HTTPException(404)
     try:
         url = await pipeline.layout_preview(post, layout)
@@ -481,6 +488,16 @@ async def _preview_response(post: dict | None, layout: str):
         log.exception("Layout preview %s for %s failed", layout, post["id"])
         raise HTTPException(503, "This preview could not be made") from None
     return RedirectResponse(url, status_code=302)
+
+
+@app.get("/api/posts/{post_id}/previews")
+async def api_previews(request: Request, post_id: str):
+    """The layout previews made so far (the post page fills in the missing ones as they arrive)."""
+    require_api_login(request)
+    post = await get_store().get_post(post_id)
+    if not post:
+        raise HTTPException(404)
+    return await pipeline.ready_previews(post) if pipeline.can_preview(post) else {}
 
 
 @app.get("/posts/{post_id}/layout/{layout}.jpg")
@@ -631,7 +648,8 @@ async def review_page(request: Request, post_id: str, action: str, t: str, r: st
                             "email link")
         return page(request, "message.html", title="Already handled", text=await handled_text(post, action), post=post)
     if action == "layouts":  # a page of previews; nothing changes until a layout is tapped
-        return page(request, "layouts.html", post=post, token=t, layouts=pipeline.layout_options(post))
+        return page(request, "layouts.html", post=post, token=t, layouts=pipeline.layout_options(post),
+                    previews=await pipeline.ready_previews(post))
     when = parse(post.get("scheduled_for"))
     future = bool(when and when > now_utc() + timedelta(minutes=1))
     label = {

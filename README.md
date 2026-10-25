@@ -49,6 +49,18 @@ On each post's page you can **Publish now**, **Change the time**, **Reject & red
   text are shown in every layout. Tap one and the post is redrawn, with no new picture and no AI call, and a new
   approval email follows.
 
+## Showcase posts (an infographic poster with several photos)
+
+**Post style → ✨ Showcase** in Create post. The prompt can be the client's own, written with the Amana assistant,
+or left empty for an automatic topic.
+- **The AI writes the poster** (`writer.make_showcase_brief`): a title with highlighted words, a tagline, a banner
+  line, 5 service items, 4 "why choose" points, 3 badges and a call to action. It goes through the same claim check,
+  so no "leading", "zero downtime", "free" or invented numbers.
+- **Photos:** Gemini makes 2 pictures: the hero photo, and one sheet of 9 photos that is cut into the side, "why" and
+  service photos (`showcase.cut_sheet`). If a sheet can't be cut twice, photos of earlier posts are used.
+- **4 layouts** (`app/showcase.py`): Classic, Light, Split and Grid. Auto takes turns. "Try other layouts" switches
+  between them with the same photos and words.
+
 ## Your own photos and videos (Upload page)
 
 Three choices: **One photo**, **Photo carousel** (2 to 10 photos) or **Video** (MP4 or MOV).
